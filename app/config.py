@@ -22,7 +22,7 @@ def settings_from_env() -> dict[str, Any]:
         "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", ""),
         "GEMINI_FALLBACK_MODEL": os.environ.get("GEMINI_FALLBACK_MODEL", ""),
         "GEMINI_CONCURRENCY": max(1, _int_env("GEMINI_CONCURRENCY", 2)),
-        "GEMINI_MAX_RETRIES": 5,
+        "GEMINI_MAX_RETRIES": max(0, _int_env("GEMINI_MAX_RETRIES", 10)),
         # Uploads
         "MAX_FILES_PER_BATCH": 50,
         "MAX_FILE_BYTES": 5 * 1024 * 1024,
