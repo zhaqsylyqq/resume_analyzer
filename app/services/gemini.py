@@ -4,10 +4,12 @@ Reliability rules:
 - Every call asks for JSON with a response schema; the reply is validated with pydantic.
   Invalid output is retried once, then AnalysisFailed is raised (caller marks the resume
   "analysis_failed" and continues the batch).
-- Rate limits (429) and overload (5xx) are retried with exponential backoff and jitter,
-  honouring the server's retry hint. On repeated 503 the fallback model is used.
-- A process-wide semaphore caps concurrent requests; a shared cooldown pauses all workers
-  after a 429 so the batch does not hammer the free tier.
+- Rate limits (429) and overload (503) put that model on a shared cooldown (circuit
+  breaker) for the backoff delay, honouring the server's retry hint. Quotas are per model,
+  so while the main model cools down every worker goes straight to the fallback model;
+  only when all models are cooling down do workers wait. Other 5xx errors back off
+  exponentially with jitter.
+- A process-wide semaphore caps concurrent requests.
 """
 from __future__ import annotations
 
@@ -99,19 +101,22 @@ class GeminiService:
         base_delay: float = 2.0,
         max_delay: float = 60.0,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if not model:
             raise GeminiError("GEMINI_MODEL is not configured")
         self.client = client
         self.model = model
-        self.fallback_model = fallback_model or None
+        self.fallback_model = fallback_model if fallback_model and fallback_model != model else None
         self.max_retries = max_retries
         self.base_delay = base_delay
         self.max_delay = max_delay
         self._sleep = sleep
+        self._clock = clock
         self._slots = threading.BoundedSemaphore(max(1, concurrency))
-        self._cooldown_lock = threading.Lock()
-        self._cooldown_until = 0.0
+        self._models = [model] + ([self.fallback_model] if self.fallback_model else [])
+        self._blocked_until = {m: 0.0 for m in self._models}
+        self._breaker_lock = threading.Lock()
 
     # Public API -----------------------------------------------------------------------
 
@@ -173,10 +178,11 @@ class GeminiService:
         raise AnalysisFailed(f"invalid {schema.__name__} after retry")
 
     def _call(self, system: str, user: str, schema: type[BaseModel]) -> str | None:
-        model = self.model
-        overloads = 0
         for attempt in range(self.max_retries + 1):
-            self._wait_for_cooldown()
+            model, wait = self._pick_model()
+            if wait > 0:
+                log.info("All Gemini models cooling down, waiting %.1fs", wait)
+                self._sleep(wait)
             try:
                 with self._slots:
                     response = self.client.models.generate_content(
@@ -197,15 +203,12 @@ class GeminiService:
                 if attempt == self.max_retries:
                     raise GeminiUnavailable(f"Gemini unavailable after retries ({exc.code})") from exc
                 delay = self._backoff(attempt, _retry_hint_seconds(exc))
-                if exc.code == 429:
-                    self._start_cooldown(delay)
-                elif exc.code == 503:
-                    overloads += 1
-                    if overloads >= 2 and self.fallback_model and model != self.fallback_model:
-                        log.info("Model %s overloaded, switching to fallback %s", model, self.fallback_model)
-                        model = self.fallback_model
-                log.info("Gemini %s, retrying in %.1fs (attempt %d)", exc.code, delay, attempt + 1)
-                self._sleep(delay)
+                if exc.code in (429, 503):
+                    self._block(model, delay)
+                    log.info("Gemini %s on %s, cooling it down for %.1fs (attempt %d)", exc.code, model, delay, attempt + 1)
+                else:
+                    log.info("Gemini %s on %s, retrying in %.1fs (attempt %d)", exc.code, model, delay, attempt + 1)
+                    self._sleep(delay)
         raise GeminiUnavailable("unreachable")  # pragma: no cover
 
     def _backoff(self, attempt: int, hint: float | None) -> float:
@@ -214,14 +217,19 @@ class GeminiService:
             delay = max(delay, min(hint, self.max_delay))
         return delay + random.uniform(0, delay * 0.25)
 
-    def _start_cooldown(self, seconds: float) -> None:
-        with self._cooldown_lock:
-            self._cooldown_until = max(self._cooldown_until, time.monotonic() + seconds)
+    def _block(self, model: str, seconds: float) -> None:
+        with self._breaker_lock:
+            self._blocked_until[model] = max(self._blocked_until[model], self._clock() + seconds)
 
-    def _wait_for_cooldown(self) -> None:
-        remaining = self._cooldown_until - time.monotonic()
-        if remaining > 0:
-            self._sleep(remaining)
+    def _pick_model(self) -> tuple[str, float]:
+        """First model not cooling down (main preferred), else the one that recovers first."""
+        with self._breaker_lock:
+            now = self._clock()
+            for model in self._models:
+                if self._blocked_until[model] <= now:
+                    return model, 0.0
+            model = min(self._models, key=self._blocked_until.__getitem__)
+            return model, self._blocked_until[model] - now
 
 
 def get_gemini() -> GeminiService:

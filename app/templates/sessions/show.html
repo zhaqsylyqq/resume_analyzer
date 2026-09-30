@@ -95,9 +95,14 @@
       <div class="card__header"><h2>{{ t('show.vacancies') }}</h2></div>
       <ul class="vacancy-list">
         {% for v in vacancies %}
-          <li class="vacancy-list__item">
-            <div class="vacancy-list__title">{{ v.title }}</div>
-            <p class="muted small mb-0 clamp-3">{{ v.text }}</p>
+          <li>
+            <a class="vacancy-list__item" href="{{ url_for('vacancies.show', session_id=session.id, vacancy_id=v.id) }}">
+              <div class="row row--between">
+                <span class="vacancy-list__title">{{ v.title }}</span>
+                <span class="small muted">{{ t('show.open_ranking') }} →</span>
+              </div>
+              <p class="muted small mb-0 clamp-3">{{ v.text }}</p>
+            </a>
           </li>
         {% endfor %}
       </ul>
