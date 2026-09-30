@@ -1,38 +1,10 @@
 import io
 
-import pytest
-
 from app.services import storage
 from app.services.gemini import GeminiService
 
 from .fakes import FakeClient, make_docx, make_pdf, smart_handler
-
-VACANCY_TEXT = "Требуется Python-разработчик: Django, PostgreSQL, Docker, опыт от 3 лет."
-
-
-@pytest.fixture()
-def fake_gemini(app):
-    service = GeminiService(FakeClient(handler=smart_handler()), "test-model", sleep=lambda s: None)
-    app.extensions["gemini"] = service
-    return service
-
-
-def create_session(client, csrf, vacancies=(("Python Developer", VACANCY_TEXT),), title="Осенний набор"):
-    data = {"csrf_token": csrf, "title": title, "language": "ru",
-            "vacancy_title": [v[0] for v in vacancies], "vacancy_text": [v[1] for v in vacancies]}
-    response = client.post("/sessions", data=data)
-    assert response.status_code == 302, response.get_data(as_text=True)
-    return int(response.headers["Location"].rsplit("/", 1)[1])
-
-
-def upload(client, csrf, session_id, files):
-    data = {"files": [(io.BytesIO(content), name) for name, content in files]}
-    return client.post(f"/sessions/{session_id}/resumes", data=data, headers={"X-CSRF-Token": csrf},
-                       content_type="multipart/form-data")
-
-
-def resume_text(i):
-    return f"Кандидат {i}. Python-разработчик, Django, PostgreSQL, Docker, {i + 2} года опыта.".encode()
+from .helpers import VACANCY_TEXT, create_session, resume_text, upload
 
 
 def test_create_session_validates_input(client, csrf):
