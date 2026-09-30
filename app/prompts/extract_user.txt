@@ -1,0 +1,5 @@
+Extract the candidate profile from this resume.
+
+<resume>
+$resume
+</resume>
