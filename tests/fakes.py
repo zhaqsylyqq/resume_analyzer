@@ -8,9 +8,16 @@ from typing import Any, Callable
 from google.genai import errors
 
 
-def api_error(code: int, retry_delay: str | None = None) -> errors.APIError:
+def api_error(code: int, retry_delay: str | None = None, quota_id: str | None = None) -> errors.APIError:
     details = [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay}] if retry_delay else []
+    if quota_id:
+        details.append({"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                        "violations": [{"quotaId": quota_id, "quotaValue": "20"}]})
     return errors.APIError(code, {"error": {"code": code, "message": f"fake {code}", "status": "X", "details": details}})
+
+
+def daily_quota_error() -> errors.APIError:
+    return api_error(429, "17s", "GenerateRequestsPerDayPerProjectPerModel-FreeTier")
 
 
 @dataclass

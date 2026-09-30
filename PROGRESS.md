@@ -47,6 +47,13 @@
   Verified on waitress: every page, assets under CSP, ranking with B1/B2 panels, CSV,
   Kazakh UI and the bias-check API.
 
+- Fix (after phase 6): users hit "Gemini overloaded" constantly. Root cause was the
+  free-tier **daily** quota (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, 20 per
+  model), not overload. `GEMINI_FALLBACK_MODEL` is now a comma-separated chain; a daily-
+  quota 429 takes the model out for an hour and switches instantly; when every model is
+  out, resumes fail fast with a dedicated "daily limit" message. Verified live: fell
+  through two exhausted models to `gemini-3.5-flash-lite` in 15 s with good results.
+
 ## Next (backlog)
 - F5 Market feedback on the vacancy (explicitly out of scope for now).
 - Build and run the Docker image (Docker daemon was not running during phase 6).

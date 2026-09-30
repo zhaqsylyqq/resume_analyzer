@@ -7,12 +7,13 @@ from app.services.gemini import (
     GeminiError,
     GeminiService,
     GeminiUnavailable,
+    QuotaExhausted,
     get_gemini,
     verdict_for,
 )
 from app.services.schemas import CandidateProfile, VacancyInput
 
-from .fakes import PROFILE, FakeClient, api_error, scoring_reply
+from .fakes import PROFILE, FakeClient, api_error, daily_quota_error, scoring_reply
 
 VACANCIES = [VacancyInput(id=1, title="Python Developer", text="Python, Django, Kubernetes"),
              VacancyInput(id=2, title="Data Engineer", text="SQL, Airflow")]
@@ -117,9 +118,41 @@ def test_waits_for_the_first_model_to_recover_when_all_are_cooling():
     assert len(sleeps) == 1 and 10 <= sleeps[0] < 40
 
 
-def test_fallback_equal_to_main_model_is_ignored():
-    service = GeminiService(FakeClient([]), "same", "same")
-    assert service.fallback_model is None
+def test_fallback_chain_is_parsed_deduplicated_and_excludes_main():
+    service = GeminiService(FakeClient([]), "main", " a, main ,b,, a ")
+    assert service.fallback_models == ["a", "b"]
+    assert GeminiService(FakeClient([]), "main", ["x", "x"]).fallback_models == ["x"]
+    assert GeminiService(FakeClient([]), "main", None).fallback_models == []
+
+
+def test_daily_quota_walks_the_fallback_chain_without_waiting():
+    service, sleeps = make_service([daily_quota_error(), daily_quota_error(), PROFILE], fallback="fb1,fb2")
+    service.extract_profile("text")
+    assert models_called(service) == ["main-model", "fb1", "fb2"]
+    assert sleeps == []
+
+
+def test_daily_quota_keeps_model_out_much_longer_than_a_minute_limit():
+    service, _ = make_service([daily_quota_error(), PROFILE, PROFILE], fallback="fb1")
+    service.extract_profile("a")
+    service.fake_time.now += 600  # a per-minute cooldown would be long over
+    service.extract_profile("b")
+    assert models_called(service) == ["main-model", "fb1", "fb1"]
+
+
+def test_all_models_out_of_daily_quota_fails_fast():
+    service, sleeps = make_service([daily_quota_error(), daily_quota_error()], fallback="fb1")
+    with pytest.raises(QuotaExhausted):
+        service.extract_profile("a")
+    with pytest.raises(QuotaExhausted):  # next resume fails instantly, no API call
+        service.extract_profile("b")
+    assert len(service.client.models.calls) == 2 and sleeps == []
+
+
+def test_minute_rate_limit_is_not_mistaken_for_daily_quota():
+    service, sleeps = make_service([api_error(429, "20s", "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"), PROFILE])
+    service.extract_profile("text")
+    assert models_called(service) == ["main-model", "main-model"] and 20 <= sleeps[0] < 60
 
 
 def test_retries_exhausted_raises_unavailable():

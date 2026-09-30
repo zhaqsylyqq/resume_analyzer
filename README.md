@@ -55,7 +55,7 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 |----------|---------|---------|
 | `GEMINI_API_KEY` | — (required) | Gemini API key |
 | `GEMINI_MODEL` | — (required) | Main model, e.g. `gemini-3.8-flash` |
-| `GEMINI_FALLBACK_MODEL` | empty | Used while the main model is rate-limited or overloaded |
+| `GEMINI_FALLBACK_MODEL` | empty | Comma-separated chain tried while the main model is rate-limited, overloaded or out of daily quota |
 | `GEMINI_CONCURRENCY` | `2` | Parallel Gemini requests (keep low on the free tier) |
 | `GEMINI_MAX_RETRIES` | `10` | Retries on 429/5xx before a resume is marked failed |
 | `FLASK_SECRET_KEY` | generated | Session secret; generated into `instance/.secret_key` if unset |
@@ -144,9 +144,13 @@ legacy/                original Enbek prototype, read-only
 
 ## Troubleshooting
 
-- **Analysis is slow / "Gemini is overloaded".** The free tier allows only a few requests
-  per minute; each resume needs two. Resumes wait and retry automatically; press
-  "Retry failed" later for any that still failed, or use a paid key.
+- **"Daily limit exhausted".** The free tier allows about 20 requests per model per day,
+  and each resume needs two — roughly 10 resumes per model per day. Every model in
+  `GEMINI_FALLBACK_MODEL` has its own quota (the `-lite` models work well), so a chain of
+  four models gives ~40 resumes/day. Quotas reset daily; for real volumes enable billing
+  on the key. Press "Retry failed" once quota is available again.
+- **Analysis is slow / "Gemini is overloaded".** Per-minute limits and 503s are retried
+  automatically with the fallback chain; press "Retry failed" for anything left over.
 - **`404 ... model is no longer available`.** Pick a current model from
   `python scripts/smoke_test.py --list-models` and set `GEMINI_MODEL`.
 - **A PDF is rejected as a scan.** Only PDFs with a text layer are supported (no OCR);

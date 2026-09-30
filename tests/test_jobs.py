@@ -26,6 +26,19 @@ def test_resume_queued_while_job_is_finishing_is_not_lost(app, client, csrf, fak
     assert not jobs.is_running(session_id)
 
 
+def test_daily_quota_marks_resumes_with_a_clear_reason(app, client, csrf):
+    from .fakes import daily_quota_error
+
+    app.extensions["gemini"] = GeminiService(FakeClient(handler=lambda call: daily_quota_error()), "m", "fb",
+                                             sleep=lambda s: None)
+    session_id = create_session(client, csrf)
+    upload(client, csrf, session_id, [("a.txt", resume_text(1)), ("b.txt", resume_text(2))])
+    resumes = status(client, session_id)["resumes"]
+    assert [r["status"] for r in resumes] == ["analysis_failed"] * 2
+    assert all("дневной лимит" in r["message"] for r in resumes)
+    assert len(app.extensions["gemini"].client.models.calls) == 2  # second resume failed without calling
+
+
 def test_vacancy_added_during_scoring_is_scored_for_that_resume(app, client, csrf):
     session_id = create_session(client, csrf)
     base = smart_handler()

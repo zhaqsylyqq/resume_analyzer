@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, current_app
 
 from . import storage
-from .gemini import AnalysisFailed, GeminiError, GeminiService, GeminiUnavailable, get_gemini
+from .gemini import AnalysisFailed, GeminiError, GeminiService, GeminiUnavailable, QuotaExhausted, get_gemini
 from .schemas import VacancyInput
 
 log = logging.getLogger(__name__)
@@ -97,6 +97,8 @@ def _analyze(app: Flask, service: GeminiService, resume_id: int, language: str) 
         storage.set_resume_status(db, resume_id, storage.DONE)
     except AnalysisFailed:
         storage.set_resume_status(db, resume_id, storage.ANALYSIS_FAILED, "invalid_output")
+    except QuotaExhausted:
+        storage.set_resume_status(db, resume_id, storage.ANALYSIS_FAILED, "daily_quota")
     except GeminiUnavailable:
         storage.set_resume_status(db, resume_id, storage.ANALYSIS_FAILED, "unavailable")
     except GeminiError as exc:
