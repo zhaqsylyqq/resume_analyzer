@@ -1,0 +1,10 @@
+[project]
+name = "resume-screening"
+version = "0.1.0"
+description = "AI bulk resume screening platform (RU/KK)"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = ["error::DeprecationWarning:app.*"]
