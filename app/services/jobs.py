@@ -54,7 +54,13 @@ def _run(app: Flask, service: GeminiService, session_id: int) -> None:
                 while True:
                     ids = storage.claim_pending(db, session_id)
                     if not ids:
-                        break
+                        # Decide to stop under the same lock start() uses, so a resume queued
+                        # right now either gets claimed by this loop or starts a new job.
+                        with _lock:
+                            if storage.progress(db, session_id)[storage.PENDING] == 0:
+                                _running.discard(session_id)
+                                return
+                        continue
                     workers = min(len(ids), app.config["GEMINI_CONCURRENCY"])
                     if workers <= 1 or app.config["SYNC_JOBS"]:
                         for resume_id in ids:
@@ -81,8 +87,12 @@ def _analyze(app: Flask, service: GeminiService, resume_id: int, language: str) 
         if profile is None:
             profile = service.extract_profile(row["text"], language)
             storage.save_profile(db, resume_id, profile)
-        vacancies = [VacancyInput(id=v["id"], title=v["title"], text=v["text"]) for v in storage.unscored_vacancies(db, resume_id)]
-        if vacancies:
+        # Loop so a vacancy added while this resume was being scored is scored too.
+        for _ in range(3):
+            vacancies = [VacancyInput(id=v["id"], title=v["title"], text=v["text"])
+                         for v in storage.unscored_vacancies(db, resume_id)]
+            if not vacancies:
+                break
             storage.save_scores(db, resume_id, service.score(profile, vacancies, language))
         storage.set_resume_status(db, resume_id, storage.DONE)
     except AnalysisFailed:

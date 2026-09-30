@@ -9,7 +9,7 @@
 | 3 | F3 storage + F6 append | done |
 | 4 | F2 ranking UI + CSV | done |
 | 5 | B1 bias check + B2 diversity | done |
-| 6 | Polish, README, Dockerfile | next |
+| 6 | Polish, README, Dockerfile | done |
 
 ## Done
 - Phase 0: app factory, env-based config, CSRF + security headers, RU/KK i18n, design system
@@ -40,9 +40,18 @@
   verified quotes and neutral rewrite; B2 shortlist-vs-pool metrics with four-fifths rule
   and small-cell suppression. Live AI check found all 7 issues in the biased sample.
 
-## Next
-- Phase 6: README, Dockerfile (waitress, single process — the job runner is in-process),
-  `.dockerignore`, final UI/i18n review, accessibility pass.
+- Phase 6: README, Dockerfile (waitress, non-root, health check, instance volume),
+  `.dockerignore`, GitHub Actions CI (pytest), WCAG AA contrast fixes (dark text on the
+  brand orange), localized JSON errors, quieter httpx logs. Fixed two job-runner races
+  (resume queued as a job finishes; vacancy added mid-scoring) with regression tests.
+  Verified on waitress: every page, assets under CSP, ranking with B1/B2 panels, CSV,
+  Kazakh UI and the bias-check API.
+
+## Next (backlog)
+- F5 Market feedback on the vacancy (explicitly out of scope for now).
+- Build and run the Docker image (Docker daemon was not running during phase 6).
+- Optional: proactive client-side RPM limiter to avoid free-tier 429s entirely; an ETA on
+  the session page; OCR for scanned PDFs if it ever becomes in scope.
 
 ## Known issues / notes
 - `gemini-2.5-flash` is no longer available to new API keys; default model is `gemini-3.8-flash`
