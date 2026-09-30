@@ -1,0 +1,9 @@
+Assess the candidate against each vacancy. Vacancy ids to assess: $vacancy_ids
+
+<candidate>
+$candidate
+</candidate>
+
+<vacancies>
+$vacancies
+</vacancies>
