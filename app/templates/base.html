@@ -20,7 +20,9 @@
         <span class="brand__name">{{ t('app.name') }}</span>
       </a>
       <nav class="topbar__nav" aria-label="{{ t('nav.main') }}">
-        {% block nav %}{% endblock %}
+        {% set endpoint = request.endpoint or '' %}
+        <a href="{{ url_for('sessions.index') }}" {% if endpoint.startswith('sessions.') and endpoint != 'sessions.new' %}aria-current="page"{% endif %}>{{ t('nav.sessions') }}</a>
+        <a href="{{ url_for('sessions.new') }}" {% if endpoint == 'sessions.new' or endpoint == 'sessions.create' %}aria-current="page"{% endif %}>{{ t('nav.new_session') }}</a>
       </nav>
       <div class="topbar__actions">
         <div class="lang-switch" role="group" aria-label="{{ t('nav.language') }}">

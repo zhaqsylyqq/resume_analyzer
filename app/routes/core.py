@@ -5,13 +5,14 @@ from flask import Blueprint, current_app, jsonify, redirect, render_template, re
 
 from ..i18n import LANG_COOKIE
 from ..security import is_safe_redirect
+from ..services import storage
 
 bp = Blueprint("core", __name__)
 
 
 @bp.get("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", sessions=storage.list_sessions(storage.get_db(), limit=6))
 
 
 @bp.get("/lang/<code>")

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% from "sessions/_macros.html" import status_badge %}
+{% block title %}{{ session.title }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <p class="breadcrumb"><a href="{{ url_for('sessions.index') }}">{{ t('nav.sessions') }}</a> / {{ session.title }}</p>
+    <h1>{{ session.title }}</h1>
+    <p class="muted small">{{ t('show.output_language') }}: {{ t('lang.' ~ session.language) }}</p>
+  </div>
+  <form method="post" action="{{ url_for('sessions.delete', session_id=session.id) }}" data-confirm="{{ t('show.delete.confirm') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn--sm btn--danger">{{ t('show.delete') }}</button>
+  </form>
+</div>
+
+<div class="layout-split"
+     data-session
+     data-status-url="{{ url_for('sessions.status', session_id=session.id) }}"
+     data-upload-url="{{ url_for('screening.upload', session_id=session.id) }}"
+     data-analyze-url="{{ url_for('screening.analyze', session_id=session.id) }}"
+     data-max-files="{{ config.MAX_FILES_PER_BATCH }}"
+     data-max-bytes="{{ config.MAX_FILE_BYTES }}"
+     data-running="{{ 'true' if running else 'false' }}"
+     data-msg-uploaded="{{ t('upload.result') }}"
+     data-msg-failed="{{ t('upload.error.generic') }}"
+     data-msg-not-started="{{ t('upload.not_started') }}"
+     data-msg-too-many="{{ t('upload.error.too_many', limit=config.MAX_FILES_PER_BATCH) }}"
+     data-msg-bad-type="{{ t('parse_error.unsupported_type') }}"
+     data-msg-too-large="{{ t('parse_error.too_large') }}"
+     data-msg-queued="{{ t('show.retry.done') }}"
+     data-msg-complete="{{ t('show.complete') }}">
+
+  <div class="stack-lg">
+    <section class="card">
+      <div class="card__header">
+        <div>
+          <h2>{{ t('upload.title') }}</h2>
+          <p class="muted small mb-0">{{ t('upload.lead') }}</p>
+        </div>
+      </div>
+      <label class="dropzone" data-dropzone>
+        <svg class="icon dropzone__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M20 16v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3"/></svg>
+        <span class="dropzone__title">{{ t('upload.drop') }}</span>
+        <span class="muted small">{{ t('upload.formats', limit=config.MAX_FILES_PER_BATCH, size=(config.MAX_FILE_BYTES // 1048576)) }}</span>
+        <input type="file" name="files" multiple accept=".pdf,.docx,.txt" data-file-input aria-label="{{ t('upload.drop') }}">
+      </label>
+      <div class="upload-status mt-4" data-upload-progress hidden>
+        <div class="row row--between small"><span data-upload-label>{{ t('upload.uploading') }}</span><span data-upload-pct>0%</span></div>
+        <div class="progress mt-2"><div class="progress__bar" data-upload-bar></div></div>
+      </div>
+      <div class="mt-4" data-upload-report hidden>
+        <h3 class="small">{{ t('upload.rejected') }}</h3>
+        <ul class="file-list" data-rejected-list></ul>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card__header">
+        <h2>{{ t('show.resumes') }}</h2>
+        <button type="button" class="btn btn--sm" data-retry {% if not progress.analysis_failed %}hidden{% endif %}>{{ t('show.retry') }}</button>
+      </div>
+
+      <div class="stats mb-4">
+        <div class="stat"><div class="stat__value" data-stat="total">{{ progress.total }}</div><div class="stat__label">{{ t('show.stat.total') }}</div></div>
+        <div class="stat"><div class="stat__value" data-stat="done">{{ progress.done }}</div><div class="stat__label">{{ t('show.stat.done') }}</div></div>
+        <div class="stat"><div class="stat__value" data-stat="queue">{{ progress.pending + progress.processing }}</div><div class="stat__label">{{ t('show.stat.queue') }}</div></div>
+        <div class="stat"><div class="stat__value" data-stat="failed">{{ progress.parse_failed + progress.analysis_failed }}</div><div class="stat__label">{{ t('show.stat.failed') }}</div></div>
+      </div>
+      <div class="row small muted mb-4" data-analysis-state {% if not (running or progress.pending or progress.processing) %}hidden{% endif %}>
+        <span class="spinner" aria-hidden="true"></span><span>{{ t('show.analyzing') }}</span>
+      </div>
+
+      <p class="muted" data-resumes-empty {% if resumes %}hidden{% endif %}>{{ t('show.resumes.empty') }}</p>
+      <ul class="file-list" data-resume-list>
+        {% for r in resumes %}
+          <li class="file-item" data-resume-id="{{ r.id }}">
+            <div class="file-item__name">
+              <div>{{ r.name or r.filename }}</div>
+              <div class="file-item__meta">{% if r.name %}{{ r.filename }}{% endif %}{% if r.headline %} · {{ r.headline }}{% endif %}</div>
+              {% if r.message %}<div class="file-item__error">{{ r.message }}</div>{% endif %}
+            </div>
+            {{ status_badge(r.status, r.status_label) }}
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  </div>
+
+  <aside class="stack">
+    <section class="card">
+      <div class="card__header"><h2>{{ t('show.vacancies') }}</h2></div>
+      <ul class="vacancy-list">
+        {% for v in vacancies %}
+          <li class="vacancy-list__item">
+            <div class="vacancy-list__title">{{ v.title }}</div>
+            <p class="muted small mb-0 clamp-3">{{ v.text }}</p>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  </aside>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/session.js') }}" defer></script>
+{% endblock %}

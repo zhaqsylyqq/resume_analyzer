@@ -40,5 +40,19 @@
     if (message && !window.confirm(message)) event.preventDefault();
   });
 
+  // Progress bars rendered server-side carry their width in data-width (no inline styles under CSP).
+  document.querySelectorAll("[data-width]").forEach(function (bar) {
+    bar.style.width = Math.max(0, Math.min(100, parseFloat(bar.getAttribute("data-width")) || 0)) + "%";
+  });
+
+  // Show UTC timestamps in the viewer's local time.
+  document.querySelectorAll("time[data-local-time]").forEach(function (node) {
+    var date = new Date(node.getAttribute("datetime"));
+    if (!isNaN(date)) {
+      node.textContent = date.toLocaleString(document.documentElement.lang === "kk" ? "kk-KZ" : "ru-RU",
+        { dateStyle: "medium", timeStyle: "short" });
+    }
+  });
+
   window.App = { request: request, toast: toast, csrfToken: csrfToken };
 })();

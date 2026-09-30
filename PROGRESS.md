@@ -5,8 +5,8 @@
 |-------|-------|-------|
 | 0 | Skeleton | done |
 | 1 | F7 Gemini service | done |
-| 2 | F4 parsing + F1 batch upload | next |
-| 3 | F3 storage + F6 append | todo |
+| 2 | F4 parsing + F1 batch upload | done |
+| 3 | F3 storage + F6 append | next |
 | 4 | F2 ranking UI + CSV | todo |
 | 5 | B1 bias check + B2 diversity | todo |
 | 6 | Polish, README, Dockerfile | todo |
@@ -20,9 +20,16 @@
   concurrency cap), `anonymize.scoring_view` + RU/KK/EN demographic scrubber, prompt
   injection fencing. Verified live with `scripts/smoke_test.py --pipeline` (RU and KK).
 
+- Phase 2: `parsing.py` (PDF/DOCX/TXT, signature sniffing, zip-bomb/page/size limits,
+  encoding fallback), batch upload endpoint with duplicate detection, background job
+  runner (`jobs.py`), session create form (multi-vacancy), session workspace with
+  drag-and-drop + live status polling, 20 synthetic RU/KK samples + 3 bad files
+  (`scripts/make_samples.py`). The SQLite schema (`storage.py`) was built here because
+  uploads need a session to attach to.
+
 ## Next
-- Phase 2: `parsing.py` (PDF/DOCX/TXT with content sniffing, zip-bomb and size limits),
-  batch upload endpoint + drag-and-drop UI, synthetic samples.
+- Phase 3: session history polish, F6 append flow (add vacancy to an existing session →
+  score only missing pairs), retry UX, restart recovery tests.
 
 ## Known issues / notes
 - `gemini-2.5-flash` is no longer available to new API keys; default model is `gemini-3.8-flash`

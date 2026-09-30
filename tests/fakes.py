@@ -61,6 +61,64 @@ PROFILE = {
 }
 
 
+def smart_handler(profile: dict[str, Any] | None = None, score_for: Callable[[str], int] | None = None):
+    """Answer extraction with a profile and scoring with every requested vacancy id."""
+    import re
+
+    from app.services.schemas import CandidateProfile
+
+    def handle(call: dict[str, Any]) -> Any:
+        if call["config"].response_schema is CandidateProfile:
+            return profile or PROFILE
+        ids = [int(i) for i in re.search(r"Vacancy ids to assess: ([\d, ]+)", call["contents"]).group(1).split(",")]
+        return scoring_reply(ids, score_for(call["contents"]) if score_for else 80)
+
+    return handle
+
+
+def make_pdf(lines: list[str]) -> bytes:
+    """Minimal one-page PDF with a Helvetica text layer (ASCII only)."""
+    ops = " ".join(f"({line}) Tj 0 -16 Td" for line in lines)
+    content = f"BT /F1 12 Tf 72 720 Td {ops} ET"
+    objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+        "/Resources << /Font << /F1 5 0 R >> >> >>",
+        f"<< /Length {len(content)} >>\nstream\n{content}\nendstream",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{number} 0 obj\n{body}\nendobj\n".encode("latin-1")
+    xref = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
+    for offset in offsets:
+        out += f"{offset:010d} 00000 n \n".encode()
+    out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return bytes(out)
+
+
+def make_docx(paragraphs: list[str], table: list[list[str]] | None = None) -> bytes:
+    import io
+
+    from docx import Document
+
+    document = Document()
+    for text in paragraphs:
+        document.add_paragraph(text)
+    if table:
+        grid = document.add_table(rows=len(table), cols=len(table[0]))
+        for r, row in enumerate(table):
+            for c, value in enumerate(row):
+                grid.cell(r, c).text = value
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
 def scoring_reply(vacancy_ids: list[int], score: int = 80) -> dict[str, Any]:
     return {
         "assessments": [

@@ -1,11 +1,15 @@
 {% extends "base.html" %}
+{% from "sessions/_macros.html" import session_card %}
 {% block content %}
 <section class="hero">
   <div class="hero__text">
     <p class="eyebrow">{{ t('app.tagline') }}</p>
     <h1 class="hero__title">{{ t('home.title') }}</h1>
     <p class="hero__lead">{{ t('home.lead') }}</p>
-    {% block hero_cta %}{% endblock %}
+    <a class="btn btn--primary btn--lg" href="{{ url_for('sessions.new') }}">
+      {{ t('home.cta') }}
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </a>
   </div>
   <ul class="feature-list">
     <li class="feature">
@@ -28,5 +32,16 @@
     </li>
   </ul>
 </section>
-{% block home_sessions %}{% endblock %}
+
+<section>
+  <div class="row row--between mb-4">
+    <h2 class="mb-0">{{ t('home.recent') }}</h2>
+    {% if sessions %}<a class="btn btn--ghost btn--sm" href="{{ url_for('sessions.index') }}">{{ t('home.all_sessions') }}</a>{% endif %}
+  </div>
+  {% if sessions %}
+    <div class="grid grid--3">{% for s in sessions %}{{ session_card(s) }}{% endfor %}</div>
+  {% else %}
+    <div class="card empty-state"><p class="mb-0">{{ t('home.empty') }}</p></div>
+  {% endif %}
+</section>
 {% endblock %}

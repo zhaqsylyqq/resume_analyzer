@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% from "sessions/_macros.html" import session_card %}
+{% block title %}{{ t('sessions.title') }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ t('sessions.title') }}</h1>
+    <p class="muted">{{ t('sessions.lead') }}</p>
+  </div>
+  <a class="btn btn--primary" href="{{ url_for('sessions.new') }}">
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    {{ t('nav.new_session') }}
+  </a>
+</div>
+{% if sessions %}
+  <div class="grid grid--3">
+    {% for s in sessions %}{{ session_card(s) }}{% endfor %}
+  </div>
+{% else %}
+  <div class="card empty-state">
+    <h2>{{ t('sessions.empty.title') }}</h2>
+    <p>{{ t('home.empty') }}</p>
+    <a class="btn btn--primary" href="{{ url_for('sessions.new') }}">{{ t('home.cta') }}</a>
+  </div>
+{% endif %}
+{% endblock %}
