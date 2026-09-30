@@ -18,11 +18,27 @@ VACANCIES = [VacancyInput(id=1, title="Python Developer", text="Python, Django, 
              VacancyInput(id=2, title="Data Engineer", text="SQL, Airflow")]
 
 
+class FakeTime:
+    """Deterministic clock: sleeping advances time instantly."""
+
+    def __init__(self):
+        self.now = 1000.0
+        self.sleeps = []
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+    def clock(self):
+        return self.now
+
+
 def make_service(replies, **kwargs):
-    sleeps = []
+    fake_time = FakeTime()
     service = GeminiService(FakeClient(replies), "main-model", kwargs.pop("fallback", None),
-                            sleep=sleeps.append, **kwargs)
-    return service, sleeps
+                            sleep=fake_time.sleep, clock=fake_time.clock, **kwargs)
+    service.fake_time = fake_time
+    return service, fake_time.sleeps
 
 
 def test_extract_profile_returns_validated_model():
@@ -72,11 +88,38 @@ def test_backoff_grows_exponentially():
     assert sleeps[0] < sleeps[1] < sleeps[2]
 
 
-def test_repeated_overload_switches_to_fallback_model():
-    service, _ = make_service([api_error(503), api_error(503), PROFILE], fallback="backup-model")
+def models_called(service):
+    return [c["model"] for c in service.client.models.calls]
+
+
+@pytest.mark.parametrize("code", [429, 503])
+def test_rate_limit_or_overload_switches_to_fallback_without_waiting(code):
+    service, sleeps = make_service([api_error(code, "30s"), PROFILE], fallback="backup-model")
     service.extract_profile("text")
-    models = [c["model"] for c in service.client.models.calls]
-    assert models == ["main-model", "main-model", "backup-model"]
+    assert models_called(service) == ["main-model", "backup-model"]
+    assert sleeps == []
+
+
+def test_cooling_model_is_skipped_by_later_calls_then_restored():
+    service, _ = make_service([api_error(429, "20s"), PROFILE, PROFILE, PROFILE], fallback="backup-model")
+    service.extract_profile("a")
+    service.extract_profile("b")  # main model still cooling down
+    assert models_called(service) == ["main-model", "backup-model", "backup-model"]
+    service.fake_time.now += 60
+    service.extract_profile("c")
+    assert models_called(service)[-1] == "main-model"
+
+
+def test_waits_for_the_first_model_to_recover_when_all_are_cooling():
+    service, sleeps = make_service([api_error(429, "40s"), api_error(429, "10s"), PROFILE], fallback="backup-model")
+    service.extract_profile("text")
+    assert models_called(service) == ["main-model", "backup-model", "backup-model"]
+    assert len(sleeps) == 1 and 10 <= sleeps[0] < 40
+
+
+def test_fallback_equal_to_main_model_is_ignored():
+    service = GeminiService(FakeClient([]), "same", "same")
+    assert service.fallback_model is None
 
 
 def test_retries_exhausted_raises_unavailable():
