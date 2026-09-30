@@ -41,6 +41,11 @@
   </header>
 
   <main id="main" class="container main">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, key in messages %}
+        <div class="alert alert--{{ category }} mb-4" role="status"><p>{{ t(key) }}</p></div>
+      {% endfor %}
+    {% endwith %}
     {% block content %}{% endblock %}
   </main>
 

@@ -12,7 +12,7 @@ from .sessions import load_session_or_404
 bp = Blueprint("screening", __name__, url_prefix="/sessions")
 
 
-def _start_job(session_id: int) -> bool:
+def start_analysis(session_id: int) -> bool:
     try:
         jobs.start(session_id)
     except GeminiError:
@@ -51,7 +51,7 @@ def upload(session_id: int):
             rejected.append({"id": resume_id, "filename": parsed.filename, "error": parsed.error,
                              "message": translate(f"parse_error.{parsed.error}")})
 
-    started = _start_job(session_id) if accepted else False
+    started = start_analysis(session_id) if accepted else False
     return jsonify(accepted=accepted, rejected=rejected, started=started), 201 if accepted else 200
 
 
@@ -62,5 +62,5 @@ def analyze(session_id: int):
     db = storage.get_db()
     queued = storage.requeue_failed(db, session_id) + storage.requeue_unscored(db, session_id)
     pending = storage.progress(db, session_id)[storage.PENDING]
-    started = _start_job(session_id) if pending else False
+    started = start_analysis(session_id) if pending else False
     return jsonify(queued=queued, started=started)

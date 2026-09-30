@@ -58,7 +58,10 @@
     <section class="card">
       <div class="card__header">
         <h2>{{ t('show.resumes') }}</h2>
-        <button type="button" class="btn btn--sm" data-retry {% if not progress.analysis_failed %}hidden{% endif %}>{{ t('show.retry') }}</button>
+        {% set stalled = progress.pending and not running %}
+        <button type="button" class="btn btn--sm" data-retry
+                data-label-retry="{{ t('show.retry') }}" data-label-resume="{{ t('show.resume') }}"
+                {% if not (progress.analysis_failed or stalled) %}hidden{% endif %}>{{ t('show.resume') if stalled else t('show.retry') }}</button>
       </div>
 
       <div class="stats mb-4">
@@ -67,7 +70,7 @@
         <div class="stat"><div class="stat__value" data-stat="queue">{{ progress.pending + progress.processing }}</div><div class="stat__label">{{ t('show.stat.queue') }}</div></div>
         <div class="stat"><div class="stat__value" data-stat="failed">{{ progress.parse_failed + progress.analysis_failed }}</div><div class="stat__label">{{ t('show.stat.failed') }}</div></div>
       </div>
-      <div class="row small muted mb-4" data-analysis-state {% if not (running or progress.pending or progress.processing) %}hidden{% endif %}>
+      <div class="row small muted mb-4" data-analysis-state {% if not running %}hidden{% endif %}>
         <span class="spinner" aria-hidden="true"></span><span>{{ t('show.analyzing') }}</span>
       </div>
 
@@ -98,6 +101,22 @@
           </li>
         {% endfor %}
       </ul>
+      {% if vacancies | length < 10 %}
+        <details class="more mt-4" {% if request.args.get('add') %}open{% endif %}>
+          <summary>{{ t('vacancy.add') }}</summary>
+          <form method="post" action="{{ url_for('vacancies.create', session_id=session.id) }}" class="stack">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="field"><span class="label">{{ t('new.vacancy_title') }}</span>
+              <input class="input" name="title" required maxlength="200" placeholder="{{ t('new.vacancy_title.placeholder') }}">
+            </label>
+            <label class="field"><span class="label">{{ t('new.vacancy_text') }}</span>
+              <textarea class="textarea" name="text" required minlength="30" maxlength="20000" placeholder="{{ t('new.vacancy_text.placeholder') }}"></textarea>
+            </label>
+            <p class="hint mb-0">{{ t('vacancy.add.hint') }}</p>
+            <button type="submit" class="btn btn--primary btn--block">{{ t('vacancy.add.submit') }}</button>
+          </form>
+        </details>
+      {% endif %}
     </section>
   </aside>
 </div>

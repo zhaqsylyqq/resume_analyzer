@@ -29,6 +29,18 @@ def client(app):
 
 
 @pytest.fixture()
+def fake_gemini(app):
+    """GeminiService backed by a scripted fake client; no network, no sleeping."""
+    from app.services.gemini import GeminiService
+
+    from .fakes import FakeClient, smart_handler
+
+    service = GeminiService(FakeClient(handler=smart_handler()), "test-model", sleep=lambda s: None)
+    app.extensions["gemini"] = service
+    return service
+
+
+@pytest.fixture()
 def csrf(client):
     """Return a valid CSRF token for the test client's session."""
     html = client.get("/").get_data(as_text=True)

@@ -99,6 +99,7 @@
       addRejected(data.rejected || []);
       App.toast(format(ds.msgUploaded, { accepted: (data.accepted || []).length, rejected: (data.rejected || []).length + local.length }));
       if ((data.accepted || []).length && !data.started) App.toast(ds.msgNotStarted, "danger");
+      if (data.started) wasBusy = true;
       refresh();
     });
     xhr.send(form);
@@ -147,9 +148,11 @@
     data.resumes.forEach(function (r) { fragment.appendChild(renderResume(r)); });
     resumeList.replaceChildren(fragment);
     emptyNote.hidden = data.resumes.length > 0;
-    retryButton.hidden = !p.analysis_failed;
+    var stalled = p.pending > 0 && !data.running;
+    retryButton.hidden = !(p.analysis_failed || stalled);
+    retryButton.textContent = stalled ? retryButton.dataset.labelResume : retryButton.dataset.labelRetry;
 
-    var busy = data.running || p.pending > 0 || p.processing > 0;
+    var busy = data.running;
     analysisState.hidden = !busy;
     if (wasBusy && !busy) {
       App.toast(ds.msgComplete);

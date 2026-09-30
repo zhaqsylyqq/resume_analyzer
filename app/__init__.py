@@ -41,10 +41,12 @@ def _register_blueprints(app: Flask) -> None:
     from .routes.core import bp as core_bp
     from .routes.screening import bp as screening_bp
     from .routes.sessions import bp as sessions_bp
+    from .routes.vacancies import bp as vacancies_bp
 
     app.register_blueprint(core_bp)
     app.register_blueprint(sessions_bp)
     app.register_blueprint(screening_bp)
+    app.register_blueprint(vacancies_bp)
 
 
 def _wants_json() -> bool:
