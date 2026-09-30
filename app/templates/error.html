@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% set known = code in (400, 403, 404, 413) %}
+{% block title %}{{ code }}{% endblock %}
+{% block content %}
+<section class="empty-state empty-state--page">
+  <p class="empty-state__code">{{ code }}</p>
+  <h1>{{ t('error.title') }}</h1>
+  <p class="muted">{{ t('error.' ~ (code if known else 500)) }}</p>
+  <a class="btn btn--primary" href="{{ url_for('core.index') }}">{{ t('error.back') }}</a>
+</section>
+{% endblock %}
