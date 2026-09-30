@@ -7,7 +7,7 @@ from typing import Any
 from flask import Blueprint, abort, current_app, jsonify, redirect, render_template, request, url_for
 
 from ..i18n import get_locale, translate
-from ..services import jobs, storage
+from ..services import bias, jobs, storage
 
 bp = Blueprint("sessions", __name__, url_prefix="/sessions")
 
@@ -89,7 +89,10 @@ def create():
         form = {"title": title, "language": language, "vacancies": vacancies or [("", "")]}
         return render_template("sessions/new.html", form=form, errors=errors), 400
 
-    session_id = storage.create_session(storage.get_db(), title, language, vacancies)
+    db = storage.get_db()
+    session_id = storage.create_session(db, title, language, vacancies)
+    for vacancy in storage.list_vacancies(db, session_id):
+        storage.save_bias_report(db, vacancy["id"], bias.check(vacancy["text"]))
     return redirect(url_for("sessions.show", session_id=session_id))
 
 
@@ -97,10 +100,13 @@ def create():
 def show(session_id: int):
     session = load_session_or_404(session_id)
     db = storage.get_db()
+    vacancies = storage.list_vacancies(db, session_id)
+    bias_counts = {v["id"]: json.loads(v["bias_json"])["counts"] for v in vacancies if v["bias_json"]}
     return render_template(
         "sessions/show.html",
         session=session,
-        vacancies=storage.list_vacancies(db, session_id),
+        vacancies=vacancies,
+        bias_counts=bias_counts,
         resumes=[resume_json(r) for r in storage.list_resumes(db, session_id)],
         progress=storage.progress(db, session_id),
         running=jobs.is_running(session_id),

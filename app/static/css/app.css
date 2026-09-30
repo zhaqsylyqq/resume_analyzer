@@ -393,7 +393,8 @@ tr.is-outside td { opacity: 0.5; }
 .dist { display: grid; gap: 10px; }
 .dist__row { display: grid; grid-template-columns: minmax(90px, 140px) 1fr auto; gap: 10px; align-items: center; font-size: 0.875rem; }
 .dist__bars { display: grid; gap: 3px; }
-.dist__bar { height: 8px; border-radius: 999px; background: var(--accent); min-width: 2px; }
+.dist__bar { display: block; width: 0; height: 8px; border-radius: 999px; background: var(--accent); min-width: 2px; }
+.dist .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dist__bar--pool { background: var(--border-strong); }
 .legend { display: flex; gap: 14px; font-size: 0.8rem; color: var(--text-muted); flex-wrap: wrap; }
 .legend__swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; background: var(--accent); }
@@ -405,6 +406,10 @@ tr.is-outside td { opacity: 0.5; }
 .finding__phrase { font-weight: 700; }
 .finding p { margin: 4px 0 0; font-size: 0.875rem; }
 mark.bias { background: color-mix(in srgb, var(--warning) 30%, transparent); color: inherit; border-radius: 3px; padding: 0 2px; }
+mark.bias--high { background: color-mix(in srgb, var(--danger) 25%, transparent); }
+.findings { list-style: none; margin: 0; padding: 0; }
+.bias-result { margin-top: 12px; }
+.bias-result .findings { margin-top: 8px; }
 
 /* Details / expandable rows */
 details.more summary { cursor: pointer; color: var(--text-muted); font-size: 0.85rem; list-style: none; }

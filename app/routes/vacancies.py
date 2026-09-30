@@ -1,17 +1,19 @@
-"""Vacancies inside a session: add one later (F6) and view/export its ranking (F2)."""
+"""Vacancies: add one later (F6), ranking + CSV export (F2), bias check (B1), diversity (B2)."""
 from __future__ import annotations
 
+import json
 import re
 from urllib.parse import quote
 
-from flask import Blueprint, Response, abort, flash, redirect, render_template, request, url_for
+from flask import Blueprint, Response, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
 
-from ..i18n import translate
-from ..services import jobs, scoring, storage
+from ..i18n import get_locale, translate
+from ..services import bias, diversity, jobs, scoring, storage
+from ..services.gemini import GeminiError, get_gemini
 from .screening import start_analysis
-from .sessions import MAX_VACANCIES, load_session_or_404, validate_vacancy
+from .sessions import MAX_VACANCIES, MAX_VACANCY_TEXT, load_session_or_404, validate_vacancy
 
-bp = Blueprint("vacancies", __name__, url_prefix="/sessions")
+bp = Blueprint("vacancies", __name__)
 
 
 def _load(session_id: int, vacancy_id: int):
@@ -22,7 +24,14 @@ def _load(session_id: int, vacancy_id: int):
     return session, vacancy
 
 
-@bp.post("/<int:session_id>/vacancies")
+def _gemini_or_none():
+    try:
+        return get_gemini()
+    except GeminiError:
+        return None
+
+
+@bp.post("/sessions/<int:session_id>/vacancies")
 def create(session_id: int):
     load_session_or_404(session_id)
     db = storage.get_db()
@@ -34,39 +43,73 @@ def create(session_id: int):
     elif error := validate_vacancy(title, text):
         flash(error, "danger")
     else:
-        storage.add_vacancy(db, session_id, title, text)
+        vacancy_id = storage.add_vacancy(db, session_id, title, text)
+        storage.save_bias_report(db, vacancy_id, bias.check(text))
         if storage.requeue_unscored(db, session_id):
             start_analysis(session_id)
         flash("vacancy.added", "success")
     return redirect(url_for("sessions.show", session_id=session_id))
 
 
-@bp.get("/<int:session_id>/vacancies/<int:vacancy_id>")
+@bp.get("/sessions/<int:session_id>/vacancies/<int:vacancy_id>")
 def show(session_id: int, vacancy_id: int):
     session, vacancy = _load(session_id, vacancy_id)
     db = storage.get_db()
     top = scoring.parse_top(request.args.get("top", str(scoring.TOP_CHOICES[1])))
     candidates = scoring.ranking(db, vacancy_id)
+    shortlist = scoring.top_n(candidates, top)
     progress = storage.progress(db, session_id)
+
+    bias_report = json.loads(vacancy["bias_json"]) if vacancy["bias_json"] else None
+    if bias_report is None or bias_report.get("text_hash") != bias.text_hash(vacancy["text"]):
+        bias_report = bias.check(vacancy["text"])
+        storage.save_bias_report(db, vacancy_id, bias_report)
+
     return render_template(
         "vacancies/show.html",
         session=session,
         vacancy=vacancy,
         vacancies=storage.list_vacancies(db, session_id),
-        candidates=scoring.top_n(candidates, top),
+        candidates=shortlist,
         total=len(candidates),
         stats=scoring.summary_stats(candidates),
         top=top,
         top_choices=scoring.TOP_CHOICES,
         in_progress=jobs.is_running(session_id) or progress[storage.PENDING] > 0,
+        bias_report=bias.localize(bias_report, translate),
+        highlighted=bias.highlight(vacancy["text"], bias_report["findings"]),
+        diversity=diversity.report(db, [c.resume_id for c in candidates], [c.resume_id for c in shortlist]),
     )
+
+
+@bp.post("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/bias")
+def recheck_bias(session_id: int, vacancy_id: int):
+    session, vacancy = _load(session_id, vacancy_id)
+    service = _gemini_or_none()
+    report = bias.check(vacancy["text"], session["language"], service)
+    storage.save_bias_report(storage.get_db(), vacancy_id, report)
+    flash("bias.ai_done" if report["ai_checked"] else "bias.ai_unavailable", "success" if report["ai_checked"] else "warning")
+    top = request.form.get("top", "")
+    return redirect(url_for("vacancies.show", session_id=session_id, vacancy_id=vacancy_id, top=top or None) + "#bias")
+
+
+@bp.post("/vacancies/bias-check")
+def bias_check():
+    """Check draft vacancy text from the new-session form (JSON in, JSON out)."""
+    payload = request.get_json(silent=True) or {}
+    text = str(payload.get("text", "")).strip()[:MAX_VACANCY_TEXT]
+    language = payload.get("language") if payload.get("language") in current_app.config["LANGUAGES"] else get_locale()
+    if len(text) < 10:
+        return jsonify(error="too_short", message=translate("form.error.vacancy_text")), 400
+    report = bias.check(text, language, _gemini_or_none() if payload.get("ai", True) else None)
+    return jsonify(bias.localize(report, translate))
 
 
 def _filename(*parts: str) -> str:
     return "_".join(re.sub(r"[^\w\-]+", "-", p, flags=re.UNICODE).strip("-")[:60] for p in parts if p) + ".csv"
 
 
-@bp.get("/<int:session_id>/vacancies/<int:vacancy_id>/export.csv")
+@bp.get("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/export.csv")
 def export(session_id: int, vacancy_id: int):
     session, vacancy = _load(session_id, vacancy_id)
     top = scoring.parse_top(request.args.get("top"))

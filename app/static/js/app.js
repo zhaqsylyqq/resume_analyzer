@@ -35,9 +35,28 @@
   }
 
   // Forms with data-confirm ask before submitting (e.g. delete).
+  // Forms with data-busy-form show a spinner and block double submits on slow AI calls.
   document.addEventListener("submit", function (event) {
-    var message = event.target.getAttribute("data-confirm");
-    if (message && !window.confirm(message)) event.preventDefault();
+    var form = event.target;
+    var message = form.getAttribute("data-confirm");
+    if (message && !window.confirm(message)) { event.preventDefault(); return; }
+    if (form.hasAttribute("data-busy-form")) {
+      var button = form.querySelector('button[type="submit"]');
+      var spinner = form.querySelector("[data-busy-spinner]");
+      if (spinner) spinner.hidden = false;
+      if (button) setTimeout(function () { button.disabled = true; }, 0);
+    }
+  });
+
+  // Buttons with data-copy="<selector>" copy that element's text.
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-copy]");
+    if (!button) return;
+    var source = document.querySelector(button.getAttribute("data-copy"));
+    if (!source || !navigator.clipboard) return;
+    navigator.clipboard.writeText(source.textContent.trim()).then(function () {
+      toast(button.getAttribute("data-copied") || "OK");
+    });
   });
 
   // Progress bars rendered server-side carry their width in data-width (no inline styles under CSP).

@@ -126,13 +126,8 @@
   </section>
 
   <aside class="stack">
-    {% block sidebar %}{% endblock %}
-    <section class="card">
-      <details class="more">
-        <summary>{{ t('rank.vacancy_text') }}</summary>
-        <div><p class="small pre-line mb-0">{{ vacancy.text }}</p></div>
-      </details>
-    </section>
+    {% include "vacancies/_diversity.html" %}
+    {% include "vacancies/_bias.html" %}
   </aside>
 </div>
 {% endblock %}

@@ -4,6 +4,7 @@ Usage:
     python scripts/smoke_test.py               # structured JSON round-trip
     python scripts/smoke_test.py --list-models # list models available to the key
     python scripts/smoke_test.py --pipeline    # extract + score one synthetic resume
+    python scripts/smoke_test.py --bias        # AI bias check of the biased sample vacancy
 
 The key is read from the environment (or .env) and is never printed.
 """
@@ -73,11 +74,26 @@ def pipeline(client: genai.Client, model: str) -> int:
     return 0
 
 
+def bias_check(client: genai.Client, model: str) -> int:
+    from app.services import bias
+    from app.services.gemini import GeminiService
+
+    text = (Path(__file__).resolve().parent.parent / "samples" / "vacancy_accountant_biased_ru.txt").read_text(encoding="utf-8")
+    service = GeminiService(client, model, os.environ.get("GEMINI_FALLBACK_MODEL"))
+    report = bias.check(text, "ru", service)
+    print(f"bias: ai_checked={report['ai_checked']} counts={report['counts']}")
+    for f in report["findings"]:
+        print(f"  [{f['source']}/{f['severity']}/{f['category']}] {f['phrase']!r} {f['explanation'][:80]}")
+    print(f"rewrite: {report['rewrite'][:160]!r}")
+    return 0 if report["ai_checked"] else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--list-models", action="store_true")
     group.add_argument("--pipeline", action="store_true")
+    group.add_argument("--bias", action="store_true")
     args = parser.parse_args()
 
     load_dotenv()
@@ -97,6 +113,8 @@ def main() -> int:
         if not model:
             print("FAIL: GEMINI_MODEL is not set (check .env)")
             return 1
+        if args.bias:
+            return bias_check(client, model)
         return pipeline(client, model) if args.pipeline else ping(client, model)
     except errors.APIError as exc:
         print(f"FAIL: Gemini API error {exc.code}: {exc.message}")
