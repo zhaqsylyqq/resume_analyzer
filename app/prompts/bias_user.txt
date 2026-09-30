@@ -1,0 +1,5 @@
+Review this vacancy for biased or exclusionary wording.
+
+<vacancy>
+$vacancy
+</vacancy>

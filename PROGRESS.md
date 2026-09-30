@@ -7,9 +7,9 @@
 | 1 | F7 Gemini service | done |
 | 2 | F4 parsing + F1 batch upload | done |
 | 3 | F3 storage + F6 append | done |
-| 4 | F2 ranking UI + CSV | next |
-| 5 | B1 bias check + B2 diversity | todo |
-| 6 | Polish, README, Dockerfile | todo |
+| 4 | F2 ranking UI + CSV | done |
+| 5 | B1 bias check + B2 diversity | done |
+| 6 | Polish, README, Dockerfile | next |
 
 ## Done
 - Phase 0: app factory, env-based config, CSRF + security headers, RU/KK i18n, design system
@@ -31,10 +31,22 @@
   flash messages, shared test helpers, tests for append-only behaviour, recovery, history
   and cascade delete.
 
+- Phase 4: ranking with competition ranks and tie-preserving Top-N, ranking page (tabs,
+  stats, score bars, verdicts, expandable details, mobile cards), CSV export (BOM, `;`,
+  formula-injection safe, RFC 5987 filename). Live e2e run against real Gemini: 6 samples
+  uploaded, scan rejected, sensible ranking, CSV OK. Found and fixed: per-model circuit
+  breaker for 429/503 with instant fallback; retry budget now 10 (configurable).
+- Phase 5: B1 lexicon (RU/KK/EN, inclusive-phrase suppression) + Gemini bias check with
+  verified quotes and neutral rewrite; B2 shortlist-vs-pool metrics with four-fifths rule
+  and small-cell suppression. Live AI check found all 7 issues in the biased sample.
+
 ## Next
-- Phase 4: `scoring.py` ranking + Top-N, ranking page per vacancy (score bars, matched/
-  missing skills, expandable details), CSV export (UTF-8 BOM, formula-injection safe).
+- Phase 6: README, Dockerfile (waitress, single process — the job runner is in-process),
+  `.dockerignore`, final UI/i18n review, accessibility pass.
 
 ## Known issues / notes
 - `gemini-2.5-flash` is no longer available to new API keys; default model is `gemini-3.8-flash`
-  with `gemini-3.5-flash` as fallback. `gemini-3.8-flash` returns 503 under load at times.
+  with `gemini-3.5-flash` as fallback. On the free tier `gemini-3.8-flash` is mostly 429/503,
+  so traffic flows to the fallback; throughput is roughly 4–5 requests/minute, i.e. about
+  30–40 s per resume (2 calls each). A paid key or `GEMINI_MODEL=gemini-3.5-flash` avoids
+  the wasted first attempt.

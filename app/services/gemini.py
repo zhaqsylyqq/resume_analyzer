@@ -60,7 +60,7 @@ def load_prompt(name: str) -> Template:
     return Template((PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8"))
 
 
-def _fence(text: str, *tags: str) -> str:
+def fence(text: str, *tags: str) -> str:
     """Stop untrusted text from closing or opening our delimiter tags."""
     for tag in tags:
         text = re.sub(rf"</?\s*{tag}\s*>", f"[{tag}]", text, flags=re.IGNORECASE)
@@ -124,8 +124,8 @@ class GeminiService:
         system = load_prompt("extract_system").substitute(
             today=date.today().isoformat(), language=LANGUAGE_NAMES.get(language, "Russian")
         )
-        user = load_prompt("extract_user").substitute(resume=_fence(resume_text, "resume"))
-        return self._generate(system, user, CandidateProfile)
+        user = load_prompt("extract_user").substitute(resume=fence(resume_text, "resume"))
+        return self.generate(system, user, CandidateProfile)
 
     def score(
         self, profile: CandidateProfile, vacancies: list[VacancyInput], language: str = "ru"
@@ -143,14 +143,14 @@ class GeminiService:
         system = load_prompt("score_system").substitute(language=LANGUAGE_NAMES.get(language, "Russian"))
         user = load_prompt("score_user").substitute(
             vacancy_ids=", ".join(str(i) for i in sorted(wanted)),
-            candidate=_fence(candidate, "candidate", "vacancies"),
-            vacancies=_fence(vacancy_json, "candidate", "vacancies"),
+            candidate=fence(candidate, "candidate", "vacancies"),
+            vacancies=fence(vacancy_json, "candidate", "vacancies"),
         )
 
         def covers_all(result: ScoringResult) -> bool:
             return wanted <= {a.vacancy_id for a in result.assessments}
 
-        result = self._generate(system, user, ScoringResult, check=covers_all)
+        result = self.generate(system, user, ScoringResult, check=covers_all)
         by_id = {a.vacancy_id: a for a in result.assessments if a.vacancy_id in wanted}
         for assessment in by_id.values():
             assessment.verdict = verdict_for(assessment.score)  # keep verdict consistent with score
@@ -158,7 +158,7 @@ class GeminiService:
 
     # Internals ------------------------------------------------------------------------
 
-    def _generate(
+    def generate(
         self,
         system: str,
         user: str,

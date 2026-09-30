@@ -102,6 +102,10 @@
                 <span class="small muted">{{ t('show.open_ranking') }} →</span>
               </div>
               <p class="muted small mb-0 clamp-3">{{ v.text }}</p>
+              {% set counts = bias_counts.get(v.id) %}
+              {% if counts and (counts.high or counts.medium) %}
+                <span class="badge badge--{{ 'danger' if counts.high else 'warning' }} mt-2">{{ t('bias.badge', n=counts.high + counts.medium) }}</span>
+              {% endif %}
             </a>
           </li>
         {% endfor %}

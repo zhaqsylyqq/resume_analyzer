@@ -73,6 +73,22 @@ class ScoringResult(BaseModel):
     assessments: list[FitAssessment]
 
 
+BiasCategory = Literal["age", "gender", "appearance", "family", "ethnicity", "religion", "health", "other"]
+
+
+class BiasFinding(BaseModel):
+    phrase: str
+    category: BiasCategory
+    severity: Literal["high", "medium"]
+    explanation: str
+    suggestion: str
+
+
+class BiasReport(BaseModel):
+    findings: list[BiasFinding] = Field(default_factory=list)
+    rewrite: str = ""
+
+
 class VacancyInput(BaseModel):
     id: int
     title: str

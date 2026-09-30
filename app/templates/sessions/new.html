@@ -13,7 +13,10 @@
   <div class="alert alert--danger mb-4" role="alert"><p>{{ t('form.error.summary') }}</p></div>
 {% endif %}
 
-<form method="post" action="{{ url_for('sessions.create') }}" class="stack-lg" novalidate data-session-form>
+<form method="post" action="{{ url_for('sessions.create') }}" class="stack-lg" novalidate data-session-form
+      data-bias-url="{{ url_for('vacancies.bias_check') }}"
+      data-msg-clean="{{ t('bias.none') }}" data-msg-error="{{ t('bias.error') }}"
+      data-msg-rules-only="{{ t('bias.rules_only') }}" data-msg-suggestion="{{ t('bias.suggestion') }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
   <section class="card">
@@ -67,7 +70,14 @@
             <label class="label">{{ t('new.vacancy_text') }}
               <textarea class="textarea" name="vacancy_text" required maxlength="20000" placeholder="{{ t('new.vacancy_text.placeholder') }}">{{ vtext }}</textarea>
             </label>
-            <span class="hint">{{ t('new.vacancy_text.hint') }}</span>
+            <div class="row row--between">
+              <span class="hint">{{ t('new.vacancy_text.hint') }}</span>
+              <button type="button" class="btn btn--ghost btn--sm" data-bias-check>
+                <span class="spinner" data-busy-spinner hidden aria-hidden="true"></span>
+                {{ t('bias.check') }}
+              </button>
+            </div>
+            <div class="bias-result" data-bias-result hidden aria-live="polite"></div>
           </div>
           {% if err %}<p class="field-error" role="alert">{{ t(err) }}</p>{% endif %}
         </fieldset>

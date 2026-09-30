@@ -61,15 +61,18 @@ PROFILE = {
 }
 
 
-def smart_handler(profile: dict[str, Any] | None = None, score_for: Callable[[str], int] | None = None):
-    """Answer extraction with a profile and scoring with every requested vacancy id."""
+def smart_handler(profile: dict[str, Any] | None = None, score_for: Callable[[str], int] | None = None,
+                  bias: dict[str, Any] | None = None):
+    """Answer extraction with a profile, bias checks with `bias`, scoring with every requested id."""
     import re
 
-    from app.services.schemas import CandidateProfile
+    from app.services.schemas import BiasReport, CandidateProfile
 
     def handle(call: dict[str, Any]) -> Any:
         if call["config"].response_schema is CandidateProfile:
             return profile or PROFILE
+        if call["config"].response_schema is BiasReport:
+            return bias or {"findings": [], "rewrite": ""}
         ids = [int(i) for i in re.search(r"Vacancy ids to assess: ([\d, ]+)", call["contents"]).group(1).split(",")]
         return scoring_reply(ids, score_for(call["contents"]) if score_for else 80)
 

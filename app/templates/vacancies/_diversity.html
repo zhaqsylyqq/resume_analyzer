@@ -1,0 +1,53 @@
+<section class="card" aria-labelledby="diversity-title">
+  <div class="card__header">
+    <div>
+      <h2 id="diversity-title">{{ t('div.title') }}</h2>
+      <p class="muted small mb-0">{{ t('div.lead', shortlist=diversity.shortlist, pool=diversity.pool) }}</p>
+    </div>
+  </div>
+
+  {% if diversity.insufficient %}
+    <p class="small muted mb-0">{{ t('div.insufficient', min=5) }}</p>
+  {% else %}
+    {% if diversity.flags %}
+      <div class="alert alert--warning mb-4" role="status">
+        <div>
+          {% for flag in diversity.flags %}
+            <p>{{ t('div.flag', group=t('div.' ~ flag.group), ratio=(flag.ratio * 100) | round | int) }}</p>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+    {% if diversity.shortlist == diversity.pool %}
+      <p class="small muted">{{ t('div.whole_pool') }}</p>
+    {% endif %}
+
+    <div class="legend mb-4">
+      <span><span class="legend__swatch"></span>{{ t('div.shortlist') }}</span>
+      <span><span class="legend__swatch legend__swatch--pool"></span>{{ t('div.pool') }}</span>
+    </div>
+
+    {% for name in ('gender', 'age') %}
+      {% set dim = diversity.dimensions[name] %}
+      <h3 class="small">{{ t('div.' ~ name) }} <span class="muted">· {{ t('div.known', pct=(dim.known_share * 100) | round | int) }}</span></h3>
+      <div class="dist mb-4">
+        {% for g in dim.groups if g.pool %}
+          <div class="dist__row">
+            <span>{{ t('div.' ~ g.key) }}</span>
+            {% if g.suppressed %}
+              <span class="muted small">{{ t('div.suppressed') }}</span>
+              <span class="muted small">&lt;3</span>
+            {% else %}
+              <span class="dist__bars" aria-hidden="true">
+                <span class="dist__bar" data-width="{{ (g.shortlist_share * 100) | round(1) }}"></span>
+                <span class="dist__bar dist__bar--pool" data-width="{{ (g.pool_share * 100) | round(1) }}"></span>
+              </span>
+              <span class="small num">{{ g.shortlist }} / {{ g.pool }}{% if g.flagged %} ⚠{% endif %}</span>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    {% endfor %}
+    <p class="hint mb-0">{{ t('div.method') }}</p>
+  {% endif %}
+</section>

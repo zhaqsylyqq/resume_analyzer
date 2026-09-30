@@ -1,0 +1,55 @@
+<section class="card" id="bias" aria-labelledby="bias-title">
+  <div class="card__header">
+    <div>
+      <h2 id="bias-title">{{ t('bias.title') }}</h2>
+      <p class="muted small mb-0">{{ t('bias.ai_checked') if bias_report.ai_checked else t('bias.rules_only') }}</p>
+    </div>
+    {% if bias_report.findings %}
+      <span class="badge badge--{{ 'danger' if bias_report.counts.high else 'warning' }}">{{ bias_report.findings | length }}</span>
+    {% else %}
+      <span class="badge badge--success">{{ t('bias.clean') }}</span>
+    {% endif %}
+  </div>
+
+  {% if bias_report.findings %}
+    <p class="small">{{ t('bias.summary', high=bias_report.counts.high, medium=bias_report.counts.medium) }}</p>
+    <ul class="stack findings">
+      {% for f in bias_report.findings %}
+        <li class="finding{% if f.severity == 'high' %} finding--high{% endif %}">
+          <div class="row row--between">
+            <span class="finding__phrase">«{{ f.phrase }}»</span>
+            <span class="badge badge--plain">{{ f.label }}</span>
+          </div>
+          <p>{{ f.explanation }}</p>
+          <p><strong>{{ t('bias.suggestion') }}:</strong> {{ f.suggestion }}</p>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="small muted">{{ t('bias.none') }}</p>
+  {% endif %}
+
+  <details class="more mt-4">
+    <summary>{{ t('rank.vacancy_text') }}</summary>
+    <div><p class="small pre-line mb-0 vacancy-text">{{ highlighted }}</p></div>
+  </details>
+
+  {% if bias_report.rewrite %}
+    <details class="more mt-2">
+      <summary>{{ t('bias.rewrite') }}</summary>
+      <div>
+        <p class="small pre-line mb-0" data-rewrite>{{ bias_report.rewrite }}</p>
+        <button type="button" class="btn btn--sm" data-copy="[data-rewrite]" data-copied="{{ t('bias.copied') }}">{{ t('bias.copy') }}</button>
+      </div>
+    </details>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('vacancies.recheck_bias', session_id=session.id, vacancy_id=vacancy.id) }}" class="mt-4" data-busy-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="top" value="{{ top or 'all' }}">
+    <button type="submit" class="btn btn--sm btn--block">
+      <span class="spinner" data-busy-spinner hidden aria-hidden="true"></span>
+      {{ t('bias.check_ai_again') if bias_report.ai_checked else t('bias.check_ai') }}
+    </button>
+  </form>
+</section>
