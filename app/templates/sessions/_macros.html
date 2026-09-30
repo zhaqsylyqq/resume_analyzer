@@ -1,0 +1,19 @@
+{% macro status_badge(status, label=None) -%}
+  {%- set kind = {'done': 'success', 'processing': 'info', 'pending': 'plain', 'parse_failed': 'danger', 'analysis_failed': 'danger'}[status] -%}
+  <span class="badge badge--{{ kind }}{% if status == 'processing' %} badge--pulse{% endif %}">{{ label or t('status.' ~ status) }}</span>
+{%- endmacro %}
+
+{% macro session_card(s) -%}
+  <a class="card card--link" href="{{ url_for('sessions.show', session_id=s.id) }}">
+    <div class="row row--between">
+      <h3>{{ s.title }}</h3>
+      <span class="badge badge--plain">{{ s.language | upper }}</span>
+    </div>
+    <p class="muted small">{{ t('sessions.card.meta', vacancies=s.vacancy_count, resumes=s.resume_count) }}</p>
+    {% set pct = (100 * s.done_count / s.resume_count) | round | int if s.resume_count else 0 %}
+    <div class="progress{% if pct == 100 %} progress--success{% endif %}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ pct }}" aria-label="{{ t('sessions.progress') }}">
+      <div class="progress__bar" data-width="{{ pct }}"></div>
+    </div>
+    <p class="muted small mt-2 mb-0">{{ t('sessions.card.updated') }} <time datetime="{{ s.updated_at }}" data-local-time>{{ s.updated_at[:16] | replace('T', ' ') }}</time></p>
+  </a>
+{%- endmacro %}

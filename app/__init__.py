@@ -12,6 +12,7 @@ from werkzeug.exceptions import HTTPException
 from .config import load_secret_key, settings_from_env
 from .i18n import init_i18n
 from .security import init_security
+from .services import storage
 
 
 def create_app(overrides: dict[str, Any] | None = None) -> Flask:
@@ -30,6 +31,7 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
 
     init_security(app)
     init_i18n(app)
+    storage.init_db(app)
     _register_blueprints(app)
     _register_error_handlers(app)
     return app
@@ -37,8 +39,12 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
 
 def _register_blueprints(app: Flask) -> None:
     from .routes.core import bp as core_bp
+    from .routes.screening import bp as screening_bp
+    from .routes.sessions import bp as sessions_bp
 
     app.register_blueprint(core_bp)
+    app.register_blueprint(sessions_bp)
+    app.register_blueprint(screening_bp)
 
 
 def _wants_json() -> bool:

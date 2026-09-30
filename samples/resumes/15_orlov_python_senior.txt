@@ -1,0 +1,7 @@
+Дмитрий Орлов
+Lead Python Engineer
+Опыт: ТОО «Пи Системс», тимлид Python, 2018 – н.в.: команда из 8 человек, Django, FastAPI, PostgreSQL, Kubernetes, Kafka.
+ТОО «Ро Вэб», Python Developer, 2013 – 2018: Django, Celery, MySQL.
+Образование: КБТУ, магистр, Компьютерные науки.
+Навыки: Python, Django, FastAPI, PostgreSQL, Kafka, Kubernetes, Docker, архитектура, менторство.
+Языки: русский, английский C1.

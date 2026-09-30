@@ -1,0 +1,7 @@
+Ольга Волкова
+Python Developer
+Пол: женский. Не замужем.
+Опыт: ТОО «Фи Эдтех», Python Developer, 2020 – н.в.: Django, DRF, PostgreSQL, Celery, Docker; покрытие тестами 85%.
+Образование: ВКТУ им. Серикбаева, Программная инженерия.
+Навыки: Python, Django, DRF, PostgreSQL, Celery, Redis, Docker, pytest.
+Языки: русский, английский B2.

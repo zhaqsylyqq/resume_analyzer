@@ -117,6 +117,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .skip-link:focus { top: 12px; }
 [hidden] { display: none !important; }
+.mt-0 { margin-top: 0; }
+.mt-2 { margin-top: 8px; }
+.mt-4 { margin-top: 16px; }
+.mb-0 { margin-bottom: 0; }
+.mb-4 { margin-bottom: 16px; }
 
 .icon {
   width: 20px; height: 20px; fill: none; stroke: currentColor;
@@ -351,6 +356,16 @@ tr.is-outside td { opacity: 0.5; }
 .file-item__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-item__meta { font-size: 0.8rem; color: var(--text-muted); }
 .file-item__error { font-size: 0.8rem; color: var(--danger); }
+
+/* Vacancy list (session sidebar) */
+.vacancy-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.vacancy-list__item { padding: 12px; border-radius: var(--radius-sm); border: 1px solid transparent; }
+.vacancy-list__item + .vacancy-list__item { border-top-color: var(--border); border-radius: 0; }
+.vacancy-list__title { font-weight: 700; margin-bottom: 2px; }
+a.vacancy-list__item { display: block; text-decoration: none; border-radius: var(--radius-sm); }
+a.vacancy-list__item:hover { background: var(--surface-2); }
+.clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.vacancy-card { margin: 0; min-width: 0; }
 
 /* Stat tiles */
 .stats { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
