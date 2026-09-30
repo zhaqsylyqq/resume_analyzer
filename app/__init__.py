@@ -10,7 +10,7 @@ from flask import Flask, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException
 
 from .config import load_secret_key, settings_from_env
-from .i18n import init_i18n
+from .i18n import init_i18n, translate
 from .security import init_security
 from .services import storage
 
@@ -28,6 +28,7 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
         app.config["SECRET_KEY"] = load_secret_key(app.instance_path)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # our Gemini service logs retries itself
 
     init_security(app)
     init_i18n(app)
@@ -50,21 +51,23 @@ def _register_blueprints(app: Flask) -> None:
 
 
 def _wants_json() -> bool:
-    best = request.accept_mimetypes.best_match(["application/json", "text/html"])
+    best = request.accept_mimetypes.best_match(["text/html", "application/json"])
     return request.is_json or best == "application/json"
 
 
 def _register_error_handlers(app: Flask) -> None:
+    known = (400, 403, 404, 413)
+
     @app.errorhandler(HTTPException)
     def handle_http(exc: HTTPException):
         code = exc.code or 500
         if _wants_json():
-            return jsonify(error=exc.name, code=code), code
+            return jsonify(error=exc.name, code=code, message=translate(f"error.{code if code in known else 500}")), code
         return render_template("error.html", code=code), code
 
     @app.errorhandler(Exception)
     def handle_unexpected(exc: Exception):
         app.logger.exception("Unhandled error")
         if _wants_json():
-            return jsonify(error="Internal Server Error", code=500), 500
+            return jsonify(error="Internal Server Error", code=500, message=translate("error.500")), 500
         return render_template("error.html", code=500), 500

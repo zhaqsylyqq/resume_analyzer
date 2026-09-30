@@ -43,6 +43,12 @@ def test_json_clients_get_json_errors(client):
     response = client.get("/no-such-page", headers={"Accept": "application/json"})
     assert response.status_code == 404
     assert response.get_json()["code"] == 404
+    assert response.get_json()["message"] == TRANSLATIONS["ru"]["error.404"]
+
+
+def test_wildcard_accept_gets_html_error_page(client):
+    response = client.get("/no-such-page", headers={"Accept": "*/*"})
+    assert response.mimetype == "text/html"
 
 
 def test_is_safe_redirect():

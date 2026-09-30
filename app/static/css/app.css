@@ -1,10 +1,12 @@
 /* Enbek Screen design system. Tokens first, then base, layout, components. */
 
 :root {
+  /* WCAG AA: dark text on the brand orange (8.6:1); --accent-strong is for small text/icons (4.6:1). */
   --accent: #ff8c1c;
-  --accent-strong: #e36f00;
+  --accent-hover: #ff9d3d;
+  --accent-strong: #b35500;
   --accent-soft: #fff1e3;
-  --accent-contrast: #ffffff;
+  --accent-contrast: #1c1b19;
 
   --bg: #f6f6f4;
   --surface: #ffffff;
@@ -36,6 +38,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
+    --accent-strong: #ffa04d;
     --accent-soft: #3a2511;
     --bg: #121211;
     --surface: #1b1b19;
@@ -60,6 +63,7 @@
 }
 
 :root[data-theme="dark"] {
+  --accent-strong: #ffa04d;
   --accent-soft: #3a2511;
   --bg: #121211;
   --surface: #1b1b19;
@@ -197,7 +201,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .btn:active { transform: translateY(1px); }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
 .btn--primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
-.btn--primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+.btn--primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-contrast); }
 .btn--ghost { background: transparent; border-color: transparent; }
 .btn--ghost:hover { background: var(--surface-2); border-color: transparent; }
 .btn--danger { color: var(--danger); }
@@ -289,7 +293,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .empty-state { text-align: center; padding: 40px 16px; color: var(--text-muted); }
 .empty-state h1, .empty-state h2 { color: var(--text); }
 .empty-state--page { padding: 80px 16px; }
-.empty-state__code { font-size: 4rem; font-weight: 800; color: var(--accent); margin: 0; letter-spacing: -0.04em; }
+.empty-state__code { font-size: 4rem; font-weight: 800; color: var(--accent-strong); margin: 0; letter-spacing: -0.04em; }
 
 /* Progress */
 .progress { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
@@ -424,7 +428,7 @@ details.more > div { margin-top: 10px; display: grid; gap: 10px; }
   padding: 12px 16px; border-radius: var(--radius); background: var(--text); color: var(--bg);
   box-shadow: var(--shadow); font-size: 0.9rem; animation: toast-in 0.2s ease-out;
 }
-.toast--danger { background: var(--danger); color: #fff; }
+.toast--danger { background: #c4331f; color: #fff; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
 
 /* Spinner */
