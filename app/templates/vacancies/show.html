@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}{{ vacancy.title }} · {{ session.title }}{% endblock %}
+{% macro score_class(score) -%}{{ 'high' if score >= 65 else ('mid' if score >= 40 else 'low') }}{%- endmacro %}
+{% set verdict_kind = {'strong': 'success', 'good': 'info', 'partial': 'warning', 'weak': 'danger'} %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <p class="breadcrumb">
+      <a href="{{ url_for('sessions.index') }}">{{ t('nav.sessions') }}</a> /
+      <a href="{{ url_for('sessions.show', session_id=session.id) }}">{{ session.title }}</a> / {{ t('rank.title') }}
+    </p>
+    <h1>{{ vacancy.title }}</h1>
+  </div>
+  <div class="row">
+    <a class="btn" href="{{ url_for('sessions.show', session_id=session.id) }}">{{ t('rank.add_resumes') }}</a>
+    <a class="btn btn--primary" href="{{ url_for('vacancies.export', session_id=session.id, vacancy_id=vacancy.id, top=top or 'all') }}" download>
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M7 11l5 5 5-5M5 20h14"/></svg>
+      {{ t('rank.export') }}
+    </a>
+  </div>
+</div>
+
+{% if vacancies | length > 1 %}
+<nav class="tabs" aria-label="{{ t('show.vacancies') }}">
+  {% for v in vacancies %}
+    <a href="{{ url_for('vacancies.show', session_id=session.id, vacancy_id=v.id, top=top or 'all') }}" {% if v.id == vacancy.id %}aria-current="page"{% endif %}>{{ v.title }}</a>
+  {% endfor %}
+</nav>
+{% endif %}
+
+{% if in_progress %}
+  <div class="alert alert--info mb-4" role="status">
+    <span class="spinner" aria-hidden="true"></span>
+    <p>{{ t('rank.in_progress') }} <a href="{{ request.full_path.rstrip('?') }}">{{ t('rank.refresh') }}</a></p>
+  </div>
+{% endif %}
+
+<div class="stats mb-4">
+  <div class="stat"><div class="stat__value">{{ stats.count }}</div><div class="stat__label">{{ t('rank.stat.scored') }}</div></div>
+  <div class="stat"><div class="stat__value">{{ stats.best }}</div><div class="stat__label">{{ t('rank.stat.best') }}</div></div>
+  <div class="stat"><div class="stat__value">{{ stats.average }}</div><div class="stat__label">{{ t('rank.stat.average') }}</div></div>
+  <div class="stat"><div class="stat__value">{{ stats.strong + stats.good }}</div><div class="stat__label">{{ t('rank.stat.fit') }}</div></div>
+</div>
+
+<div class="layout-split">
+  <section class="stack">
+    <div class="row row--between">
+      <div class="segmented" role="group" aria-label="{{ t('rank.top_label') }}">
+        {% for n in top_choices %}
+          <a href="?top={{ n }}" class="{{ 'is-active' if top == n }}" {% if top == n %}aria-current="true"{% endif %}>Top {{ n }}</a>
+        {% endfor %}
+        <a href="?top=all" class="{{ 'is-active' if top is none }}" {% if top is none %}aria-current="true"{% endif %}>{{ t('rank.all') }}</a>
+      </div>
+      <span class="muted small">{{ t('rank.showing', shown=candidates | length, total=total) }}</span>
+    </div>
+
+    {% if candidates %}
+    <div class="table-wrap">
+      <table class="table ranking">
+        <thead>
+          <tr>
+            <th scope="col" class="num">#</th>
+            <th scope="col">{{ t('rank.col.candidate') }}</th>
+            <th scope="col">{{ t('rank.col.score') }}</th>
+            <th scope="col">{{ t('rank.col.summary') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in candidates %}
+          <tr>
+            <td class="num"><span class="rank{% if c.rank <= 3 %} rank--top{% endif %}">{{ c.rank }}</span></td>
+            <td class="ranking__candidate">
+              <div class="ranking__name">{{ c.name or c.filename }}</div>
+              {% if c.headline %}<div class="muted small">{{ c.headline }}</div>{% endif %}
+              <div class="muted small">
+                {% if c.experience_years is not none %}{{ t('rank.years', years=c.experience_years | round(1)) }} · {% endif %}{{ c.filename }}
+              </div>
+            </td>
+            <td>
+              <div class="score score--{{ score_class(c.score) }}" title="{{ c.score }}/100">
+                <span class="score__value">{{ c.score }}</span>
+                <span class="score__track"><span class="score__fill" data-width="{{ c.score }}"></span></span>
+              </div>
+              <span class="badge badge--{{ verdict_kind[c.verdict] }} mt-2">{{ t('verdict.' ~ c.verdict) }}</span>
+            </td>
+            <td>
+              <p class="mb-0">{{ c.summary }}</p>
+              <details class="more mt-2">
+                <summary>{{ t('rank.details') }}</summary>
+                <div>
+                  {% if c.matched_skills %}
+                    <div><div class="small muted">{{ t('rank.matched') }}</div>
+                      <ul class="chips">{% for s in c.matched_skills %}<li class="chip chip--match">{{ s }}</li>{% endfor %}</ul></div>
+                  {% endif %}
+                  {% if c.missing_skills %}
+                    <div><div class="small muted">{{ t('rank.missing') }}</div>
+                      <ul class="chips">{% for s in c.missing_skills %}<li class="chip chip--gap">{{ s }}</li>{% endfor %}</ul></div>
+                  {% endif %}
+                  {% if c.strengths %}
+                    <div><div class="small muted">{{ t('rank.strengths') }}</div>
+                      <ul class="bullets">{% for s in c.strengths %}<li>{{ s }}</li>{% endfor %}</ul></div>
+                  {% endif %}
+                  {% if c.concerns %}
+                    <div><div class="small muted">{{ t('rank.concerns') }}</div>
+                      <ul class="bullets">{% for s in c.concerns %}<li>{{ s }}</li>{% endfor %}</ul></div>
+                  {% endif %}
+                  {% if c.email or c.phone %}
+                    <div class="small">{{ t('rank.contacts') }}: {{ c.email or '' }}{% if c.email and c.phone %} · {% endif %}{{ c.phone or '' }}</div>
+                  {% endif %}
+                </div>
+              </details>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="hint">{{ t('rank.fairness_note') }}</p>
+    {% else %}
+      <div class="card empty-state">
+        <h2>{{ t('rank.empty.title') }}</h2>
+        <p>{{ t('rank.empty') }}</p>
+        <a class="btn btn--primary" href="{{ url_for('sessions.show', session_id=session.id) }}">{{ t('rank.add_resumes') }}</a>
+      </div>
+    {% endif %}
+  </section>
+
+  <aside class="stack">
+    {% block sidebar %}{% endblock %}
+    <section class="card">
+      <details class="more">
+        <summary>{{ t('rank.vacancy_text') }}</summary>
+        <div><p class="small pre-line mb-0">{{ vacancy.text }}</p></div>
+      </details>
+    </section>
+  </aside>
+</div>
+{% endblock %}

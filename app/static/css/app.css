@@ -320,6 +320,23 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .rank--top { background: var(--accent); color: var(--accent-contrast); }
 tr.is-outside td { opacity: 0.5; }
 
+/* Ranking table */
+.ranking td:first-child { width: 56px; }
+.ranking__candidate { min-width: 200px; }
+.ranking__name { font-weight: 700; }
+.ranking td:nth-child(3) { min-width: 170px; }
+.ranking td:last-child { min-width: 280px; }
+.ranking .badge { display: inline-flex; }
+.bullets { margin: 4px 0 0; padding-left: 18px; font-size: 0.875rem; }
+.pre-line { white-space: pre-line; }
+@media (max-width: 720px) {
+  .ranking thead { display: none; }
+  .ranking tr { display: grid; grid-template-columns: 44px 1fr; gap: 4px 12px; padding: 14px; border-bottom: 1px solid var(--border); }
+  .ranking td { border: 0; padding: 0; min-width: 0 !important; }
+  .ranking td:first-child { grid-row: span 3; width: auto; }
+  .ranking tbody tr:last-child { border-bottom: 0; }
+}
+
 /* Segmented control */
 .segmented { display: inline-flex; padding: 3px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); }
 .segmented a, .segmented button {
@@ -359,11 +376,10 @@ tr.is-outside td { opacity: 0.5; }
 
 /* Vacancy list (session sidebar) */
 .vacancy-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.vacancy-list__item { padding: 12px; border-radius: var(--radius-sm); border: 1px solid transparent; }
-.vacancy-list__item + .vacancy-list__item { border-top-color: var(--border); border-radius: 0; }
+.vacancy-list li + li { border-top: 1px solid var(--border); padding-top: 4px; }
+.vacancy-list__item { display: block; padding: 12px; border-radius: var(--radius-sm); text-decoration: none; }
+.vacancy-list__item:hover { background: var(--surface-2); }
 .vacancy-list__title { font-weight: 700; margin-bottom: 2px; }
-a.vacancy-list__item { display: block; text-decoration: none; border-radius: var(--radius-sm); }
-a.vacancy-list__item:hover { background: var(--surface-2); }
 .clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .vacancy-card { margin: 0; min-width: 0; }
 
