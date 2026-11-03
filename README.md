@@ -22,30 +22,88 @@ kept read-only in [`legacy/`](legacy/).
 
 UI in Russian and Kazakh, light/dark theme, responsive down to phone width.
 
-## Quick start
+## Getting started
 
-Requirements: Python 3.11+ and a Gemini API key from <https://aistudio.google.com/apikey>.
+You need Python 3.11+, Git and a Gemini API key (free at
+<https://aistudio.google.com/apikey>).
+
+### 1. Get the code
+
+```bash
+git clone https://github.com/zhaqsylyqq/resume_analyzer.git
+cd resume_analyzer
+```
+
+### 2. Install dependencies
 
 **Windows (PowerShell)**
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-Copy-Item .env.example .env        # then put your key into .env
-.\.venv\Scripts\python.exe scripts\smoke_test.py   # one real call: key + model OK?
-.\.venv\Scripts\flask.exe --app app run --debug
 ```
 
 **macOS / Linux**
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env               # then put your key into .env
-python scripts/smoke_test.py
-flask --app app run --debug
 ```
 
-Open <http://127.0.0.1:5000>, create a screening, and drop the files from
-[`samples/resumes/`](samples/resumes/) to try it (all people in the samples are fictional).
+### 3. Add your API key
+
+Copy the settings template:
+
+```powershell
+Copy-Item .env.example .env        # Windows (PowerShell)
+```
+```bash
+cp .env.example .env               # macOS / Linux
+```
+
+Open `.env` and set `GEMINI_API_KEY` and `GEMINI_MODEL`. Never commit this file; it is
+already git-ignored. See [Configuration](#configuration) for the optional settings.
+
+### 4. Check the key (optional)
+
+This makes one real Gemini call and reports whether the key and model work. To see which
+models your key can use, add `--list-models`.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\smoke_test.py   # Windows (PowerShell)
+```
+```bash
+python scripts/smoke_test.py                       # macOS / Linux
+```
+
+### 5. Start the app
+
+```powershell
+.\.venv\Scripts\flask.exe --app app run --debug    # Windows (PowerShell)
+```
+```bash
+flask --app app run --debug                        # macOS / Linux
+```
+
+Open <http://127.0.0.1:5000>. Press `Ctrl+C` in the terminal to stop the server.
+
+### 6. Try a screening
+
+1. Click **Новый скрининг** (**Жаңа іріктеу** in Kazakh).
+2. Enter a job title and paste a vacancy text, for example from
+   [`samples/vacancy_python_ru.txt`](samples/vacancy_python_ru.txt).
+3. Upload files from [`samples/resumes/`](samples/resumes/). All people in the samples are
+   fictional.
+4. Wait for the analysis to finish, then open the ranking to choose a Top-N and export CSV.
+
+### Run the tests
+
+Tests mock Gemini, so they need no key and no `.env`:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q            # Windows (PowerShell)
+```
+```bash
+pytest -q                                          # macOS / Linux
+```
 
 ## Configuration
 
