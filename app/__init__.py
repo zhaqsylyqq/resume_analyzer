@@ -29,6 +29,7 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)  # our Gemini service logs retries itself
+    logging.getLogger("fontTools").setLevel(logging.WARNING)  # PDF export font subsetting is noisy
 
     init_security(app)
     init_i18n(app)

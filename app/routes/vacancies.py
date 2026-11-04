@@ -1,4 +1,4 @@
-"""Vacancies: add one later (F6), ranking + CSV export (F2), bias check (B1), diversity (B2)."""
+"""Vacancies: add one later (F6), ranking + CSV/Excel/PDF export (F2, US7), bias check (B1), diversity (B2)."""
 from __future__ import annotations
 
 import json
@@ -8,7 +8,7 @@ from urllib.parse import quote
 from flask import Blueprint, Response, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
 
 from ..i18n import get_locale, translate
-from ..services import bias, diversity, jobs, scoring, storage
+from ..services import bias, diversity, export as exporter, jobs, scoring, storage
 from ..services.gemini import GeminiError, get_gemini
 from .screening import start_analysis
 from .sessions import MAX_VACANCIES, MAX_VACANCY_TEXT, load_session_or_404, validate_vacancy
@@ -105,19 +105,65 @@ def bias_check():
     return jsonify(bias.localize(report, translate))
 
 
+MIMETYPES = {
+    "csv": "text/csv",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pdf": "application/pdf",
+}
+
+
 def _filename(*parts: str) -> str:
-    return "_".join(re.sub(r"[^\w\-]+", "-", p, flags=re.UNICODE).strip("-")[:60] for p in parts if p) + ".csv"
+    return "_".join(re.sub(r"[^\w\-]+", "-", p, flags=re.UNICODE).strip("-")[:60] for p in parts if p)
+
+
+def _download(data: bytes, stem: str, ext: str) -> Response:
+    """File response with a UTF-8 filename (RFC 5987) and an ASCII fallback."""
+    name = f"{stem}.{ext}"
+    ascii_stem = re.sub(r"[-_]{2,}", "_", stem.encode("ascii", "ignore").decode()).strip("_-")
+    ascii_name = f"{ascii_stem or 'ranking'}.{ext}"
+    response = Response(data, mimetype=MIMETYPES[ext])
+    response.headers["Content-Disposition"] = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _shortlist(session_id: int, vacancy_id: int):
+    session, vacancy = _load(session_id, vacancy_id)
+    top = scoring.parse_top(request.args.get("top"))
+    ranked = scoring.ranking(storage.get_db(), vacancy_id)
+    stem = _filename(session["title"], vacancy["title"], f"top{top}" if top else "all")
+    return session, vacancy, top, ranked, scoring.top_n(ranked, top), stem
 
 
 @bp.get("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/export.csv")
 def export(session_id: int, vacancy_id: int):
-    session, vacancy = _load(session_id, vacancy_id)
-    top = scoring.parse_top(request.args.get("top"))
-    candidates = scoring.top_n(scoring.ranking(storage.get_db(), vacancy_id), top)
-    name = _filename(session["title"], vacancy["title"], f"top{top}" if top else "all")
-    ascii_stem = re.sub(r"[-_]{2,}", "_", name[:-4].encode("ascii", "ignore").decode()).strip("_-")
-    ascii_name = f"{ascii_stem or 'ranking'}.csv"
-    response = Response(scoring.to_csv(candidates, translate), mimetype="text/csv")
-    response.headers["Content-Disposition"] = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
-    response.headers["Cache-Control"] = "no-store"
-    return response
+    *_, shortlist, stem = _shortlist(session_id, vacancy_id)
+    return _download(scoring.to_csv(shortlist, translate), stem, "csv")
+
+
+@bp.get("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/export.xlsx")
+def export_xlsx(session_id: int, vacancy_id: int):
+    session, vacancy, _top, ranked, shortlist, stem = _shortlist(session_id, vacancy_id)
+    sheet = exporter.VacancySheet(vacancy["title"], shortlist, len(ranked))
+    return _download(exporter.to_xlsx(session["title"], [sheet], translate), stem, "xlsx")
+
+
+@bp.get("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/export.pdf")
+def export_pdf(session_id: int, vacancy_id: int):
+    session, vacancy, top, ranked, shortlist, stem = _shortlist(session_id, vacancy_id)
+    data = exporter.to_pdf(session["title"], vacancy["title"], shortlist, len(ranked), top, translate)
+    return _download(data, stem, "pdf")
+
+
+@bp.get("/sessions/<int:session_id>/export.xlsx")
+def export_session_xlsx(session_id: int):
+    """Whole session: one sheet per vacancy with its Top-N (default Top-10, ties kept)."""
+    session = load_session_or_404(session_id)
+    db = storage.get_db()
+    top = scoring.parse_top(request.args.get("top", str(scoring.TOP_CHOICES[1])))
+    sheets = []
+    for vacancy in storage.list_vacancies(db, session_id):
+        ranked = scoring.ranking(db, vacancy["id"])
+        sheets.append(exporter.VacancySheet(vacancy["title"], scoring.top_n(ranked, top), len(ranked)))
+    stem = _filename(session["title"], f"top{top}" if top else "all")
+    return _download(exporter.to_xlsx(session["title"], sheets, translate), stem, "xlsx")

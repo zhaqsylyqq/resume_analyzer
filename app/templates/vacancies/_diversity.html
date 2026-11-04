@@ -27,7 +27,7 @@
       <span><span class="legend__swatch legend__swatch--pool"></span>{{ t('div.pool') }}</span>
     </div>
 
-    {% for name in ('gender', 'age') %}
+    {% for name in ('gender', 'age', 'language') %}
       {% set dim = diversity.dimensions[name] %}
       <h3 class="small">{{ t('div.' ~ name) }} <span class="muted">· {{ t('div.known', pct=(dim.known_share * 100) | round | int) }}</span></h3>
       <div class="dist mb-4">

@@ -10,6 +10,7 @@
 | 4 | F2 ranking UI + CSV | done |
 | 5 | B1 bias check + B2 diversity | done |
 | 6 | Polish, README, Dockerfile | done |
+| 7 | Sprint 2 (SIS 8–9): US7 Excel/PDF export, language diversity, API savings | done |
 
 ## Done
 - Phase 0: app factory, env-based config, CSRF + security headers, RU/KK i18n, design system
@@ -53,6 +54,14 @@
   quota 429 takes the model out for an hour and switches instantly; when every model is
   out, resumes fail fast with a dedicated "daily limit" message. Verified live: fell
   through two exhausted models to `gemini-3.5-flash-lite` in 15 s with good results.
+
+- Phase 7 (Sprint 2, SIS 8–9): US7 export — Excel (`.xlsx`, summary sheet + one sheet per
+  vacancy, numbers stay numeric, formula-injection safe) and a PDF shortlist report with the
+  bundled DejaVu Sans font (RU/KK letters); whole-session Excel export from the session page;
+  Excel/PDF/CSV buttons on the ranking page. B2 now also compares resume language (RU/KK/EN).
+  API savings: cheapest flash-lite model in `.env.example`, compact JSON in the scoring
+  prompt, resumes cut at 20 000 chars, 5 retries instead of 10. Exports and diversity make
+  no AI calls (covered by a test). 14 new tests, 194 in total.
 
 ## Next (backlog)
 - F5 Market feedback on the vacancy (explicitly out of scope for now).

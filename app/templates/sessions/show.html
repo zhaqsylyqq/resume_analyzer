@@ -92,7 +92,10 @@
 
   <aside class="stack">
     <section class="card">
-      <div class="card__header"><h2>{{ t('show.vacancies') }}</h2></div>
+      <div class="card__header">
+        <h2>{{ t('show.vacancies') }}</h2>
+        <a class="btn btn--sm" href="{{ url_for('vacancies.export_session_xlsx', session_id=session.id) }}" download title="{{ t('show.export_all.hint') }}">{{ t('show.export_all') }}</a>
+      </div>
       <ul class="vacancy-list">
         {% for v in vacancies %}
           <li>

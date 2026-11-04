@@ -13,12 +13,13 @@ kept read-only in [`legacy/`](legacy/).
 |----|---------|
 | F1 | Batch upload — drag and drop up to 50 files, live progress, clear list of rejected files |
 | F2 | Ranking per vacancy — Top-5/10/20/all (ties kept), score bars, reasons, CSV export for Excel |
+| US7 | Excel (.xlsx, one sheet per vacancy) and PDF shortlist report with Cyrillic/Kazakh font; whole-session Excel export |
 | F3 | Session history — every screening is saved in SQLite and can be reopened |
 | F4 | `.pdf` (text layer), `.docx`, `.txt` parsing — no OCR, safe against malformed files |
 | F6 | Append — add resumes or vacancies later; only new work is sent to the AI |
 | F7 | Gemini engine — structured JSON extraction + fit scoring, validated, retried, rate-limit aware |
 | B1 | Bias check — RU/KK/EN lexicon + AI review with explanations and a neutral rewrite |
-| B2 | Diversity — shortlist vs pool by gender and age band, four-fifths rule, small-cell suppression |
+| B2 | Diversity — shortlist vs pool by gender, age band and resume language, four-fifths rule, small-cell suppression |
 
 UI in Russian and Kazakh, light/dark theme, responsive down to phone width.
 
@@ -112,10 +113,10 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `GEMINI_API_KEY` | — (required) | Gemini API key |
-| `GEMINI_MODEL` | — (required) | Main model, e.g. `gemini-3.8-flash` |
+| `GEMINI_MODEL` | — (required) | Main model; we use the cheapest tier, e.g. `gemini-3.5-flash-lite` |
 | `GEMINI_FALLBACK_MODEL` | empty | Comma-separated chain tried while the main model is rate-limited, overloaded or out of daily quota |
 | `GEMINI_CONCURRENCY` | `2` | Parallel Gemini requests (keep low on the free tier) |
-| `GEMINI_MAX_RETRIES` | `10` | Retries on 429/5xx before a resume is marked failed |
+| `GEMINI_MAX_RETRIES` | `5` | Retries on 429/5xx before a resume is marked failed |
 | `FLASK_SECRET_KEY` | generated | Session secret; generated into `instance/.secret_key` if unset |
 | `SESSION_COOKIE_SECURE` | `0` | Set to `1` when served over HTTPS |
 
@@ -130,6 +131,20 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 | Tests | `pytest -q` (Gemini is mocked, no key needed) |
 | Smoke test | `python scripts/smoke_test.py [--pipeline \| --bias \| --list-models]` |
 | Regenerate samples | `pip install -r requirements-dev.txt && python scripts/make_samples.py` |
+
+## API usage (keeping Gemini cheap)
+
+| What | Gemini requests |
+|------|-----------------|
+| New resume | 2: profile extraction + one scoring call for **all** vacancies of the session |
+| Vacancy added later | 1 per resume (scoring only; the stored profile is reused) |
+| Re-opening a session, ranking, Top-N | 0 (everything is read from SQLite) |
+| Duplicate file | 0 (detected by SHA-256 before analysis) |
+| Bias check | 0 for the dictionary; 1 only when the user clicks "check with AI" |
+| Diversity metrics, CSV / Excel / PDF export | 0 (computed locally) |
+
+Prompts send compact JSON, resumes are cut at 20 000 characters and tests always use a
+fake client, so `pytest` never spends quota.
 
 ## Docker
 
@@ -179,7 +194,7 @@ issues in [`PROGRESS.md`](PROGRESS.md).
   and page limits, processing in memory — original files are never stored, only text.
 - Resume and vacancy text is treated as untrusted in prompts (fenced, instructions inside
   it are ignored) and all output is validated against schemas.
-- Parameterized SQL only; Jinja auto-escaping; CSV export neutralizes formula injection.
+- Parameterized SQL only; Jinja auto-escaping; CSV and Excel exports neutralize formula injection.
 - Demographics are stored separately, used only for aggregates with small-cell
   suppression, and never shown per candidate or exported.
 

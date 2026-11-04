@@ -158,11 +158,12 @@ class GeminiService:
         if not vacancies:
             return []
         wanted = {v.id for v in vacancies}
-        candidate = json.dumps(scoring_view(profile), ensure_ascii=False, indent=1)
+        # Compact JSON (no indentation) keeps the prompt short: fewer input tokens per request.
+        candidate = json.dumps(scoring_view(profile), ensure_ascii=False, separators=(",", ":"))
         vacancy_json = json.dumps(
             [{"id": v.id, "title": v.title, "text": v.text[:MAX_VACANCY_CHARS]} for v in vacancies],
             ensure_ascii=False,
-            indent=1,
+            separators=(",", ":"),
         )
         system = load_prompt("score_system").substitute(language=LANGUAGE_NAMES.get(language, "Russian"))
         user = load_prompt("score_user").substitute(

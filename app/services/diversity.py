@@ -1,7 +1,8 @@
 """B2 — aggregate diversity metrics for a shortlist, never per candidate.
 
-Compares the Top-N shortlist with the whole scored pool by gender and age band, using
-only what resumes stated explicitly (everything else is "unknown"). Privacy safeguards:
+Compares the Top-N shortlist with the whole scored pool by gender, age band and resume
+language (RU/KK/EN), using only what resumes stated explicitly (everything else is
+"unknown"). All metrics are computed locally from stored data — no AI call. Privacy safeguards:
 - no report for pools smaller than MIN_POOL;
 - groups with 1–2 people are suppressed (shown as "<3", no share);
 - the adverse-impact ratio (four-fifths rule) is computed only for known groups with at
@@ -20,6 +21,7 @@ AGE_BANDS: tuple[tuple[str, int, int], ...] = (
     ("55_plus", 55, 200),
 )
 GENDERS = ("female", "male")
+LANGUAGES = ("ru", "kk", "en")
 MIN_POOL = 5
 SUPPRESS_BELOW = 3
 MIN_GROUP_FOR_RATIO = 5
@@ -35,13 +37,27 @@ def age_band(age: int | None) -> str:
     return "unknown"
 
 
-def _load(db: sqlite3.Connection, resume_ids: Iterable[int]) -> dict[int, tuple[str, str]]:
+def _load(db: sqlite3.Connection, resume_ids: Iterable[int]) -> dict[int, tuple[str, str, str]]:
     ids = list(resume_ids)
     if not ids:
         return {}
     placeholders = ",".join("?" * len(ids))
-    rows = db.execute(f"SELECT resume_id, gender, age FROM demographics WHERE resume_id IN ({placeholders})", ids)
-    return {row["resume_id"]: (row["gender"] or "unknown", age_band(row["age"])) for row in rows}
+    rows = db.execute(
+        f"""
+        SELECT r.id AS resume_id, d.gender, d.age, json_extract(r.profile_json, '$.resume_language') AS language
+        FROM resumes r LEFT JOIN demographics d ON d.resume_id = r.id
+        WHERE r.id IN ({placeholders})
+        """,
+        ids,
+    )
+    return {
+        row["resume_id"]: (
+            row["gender"] or "unknown",
+            age_band(row["age"]),
+            row["language"] if row["language"] in LANGUAGES else "unknown",
+        )
+        for row in rows
+    }
 
 
 def _dimension(keys: list[str], pool: list[str], shortlist: list[str]) -> dict[str, Any]:
@@ -73,15 +89,16 @@ def _dimension(keys: list[str], pool: list[str], shortlist: list[str]) -> dict[s
 
 def report(db: sqlite3.Connection, pool_ids: list[int], shortlist_ids: list[int]) -> dict[str, Any]:
     demo = _load(db, pool_ids)
-    unknown = ("unknown", "unknown")
+    unknown = ("unknown", "unknown", "unknown")
     pool = [demo.get(i, unknown) for i in pool_ids]
     shortlist = [demo.get(i, unknown) for i in shortlist_ids]
     if len(pool) < MIN_POOL:
         return {"insufficient": True, "pool": len(pool), "shortlist": len(shortlist)}
 
     dimensions = {
-        "gender": _dimension(list(GENDERS), [g for g, _ in pool], [g for g, _ in shortlist]),
-        "age": _dimension([key for key, _, _ in AGE_BANDS], [a for _, a in pool], [a for _, a in shortlist]),
+        "gender": _dimension(list(GENDERS), [p[0] for p in pool], [p[0] for p in shortlist]),
+        "age": _dimension([key for key, _, _ in AGE_BANDS], [p[1] for p in pool], [p[1] for p in shortlist]),
+        "language": _dimension(list(LANGUAGES), [p[2] for p in pool], [p[2] for p in shortlist]),
     }
     flags = [
         {"dimension": name, "group": g["key"], "ratio": g["ratio"]}

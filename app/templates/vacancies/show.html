@@ -13,10 +13,12 @@
   </div>
   <div class="row">
     <a class="btn" href="{{ url_for('sessions.show', session_id=session.id) }}">{{ t('rank.add_resumes') }}</a>
-    <a class="btn btn--primary" href="{{ url_for('vacancies.export', session_id=session.id, vacancy_id=vacancy.id, top=top or 'all') }}" download>
-      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M7 11l5 5 5-5M5 20h14"/></svg>
-      {{ t('rank.export') }}
-    </a>
+    <div class="row" role="group" aria-label="{{ t('rank.export_label') }}">
+      {% set dl_icon %}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M7 11l5 5 5-5M5 20h14"/></svg>{% endset %}
+      <a class="btn btn--primary" href="{{ url_for('vacancies.export_xlsx', session_id=session.id, vacancy_id=vacancy.id, top=top or 'all') }}" download>{{ dl_icon }}{{ t('rank.export_xlsx') }}</a>
+      <a class="btn" href="{{ url_for('vacancies.export_pdf', session_id=session.id, vacancy_id=vacancy.id, top=top or 'all') }}" download>{{ dl_icon }}{{ t('rank.export_pdf') }}</a>
+      <a class="btn" href="{{ url_for('vacancies.export', session_id=session.id, vacancy_id=vacancy.id, top=top or 'all') }}" download>{{ dl_icon }}{{ t('rank.export') }}</a>
+    </div>
   </div>
 </div>
 
