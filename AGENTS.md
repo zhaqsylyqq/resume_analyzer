@@ -22,6 +22,14 @@ has the user-facing setup guide.
   [`docs/specs/F7b-deepseek-provider.md`](docs/specs/F7b-deepseek-provider.md).
 - HTTP 402 (empty prepaid balance) already stops a batch fast with a `billing_exhausted`
   message.
+- DeepSeek was verified live on 2026-11-10. `smoke_test.py` ping, `--pipeline` (RU and KK)
+  and `--bias` all pass. A batch of the 20 sample resumes against 2 vacancies (RU Python,
+  KK data analyst) gave:
+  - 20 of 20 done, with no invalid output and no retries;
+  - 125 s in total (about 6 s per resume at concurrency 2);
+  - about $0.0007–0.0014 per resume (off-peak / peak), with 60% of input tokens served
+    from cache;
+  - sensible rankings.
 - A move to a self-hosted LLM was considered and deferred; do not start it.
 - The latest commit `f5c7074` ("need to check", by a teammate) added Excel/PDF export,
   language diversity and lower API usage. Its tests pass, but nobody has checked it by
@@ -120,24 +128,20 @@ For each task:
 
 ## Your tasks
 
-### 1. Verify DeepSeek live (do first)
+### 1. Finish the DeepSeek setup (small, do first)
 
-The DeepSeek backend is implemented and unit-tested, but it has not been run against the
-real API yet.
+DeepSeek works live (see [Current state](#current-state)). Two loose ends remain:
 
-- Ask the owner to put `LLM_PROVIDER=deepseek` and `DEEPSEEK_API_KEY` into `.env`. Never
-  read `.env` yourself.
-- Run `python scripts/smoke_test.py`, then `--pipeline` (RU and KK scoring) and `--bias`.
-- Then screen the 20 sample resumes in the app. Report the share of `invalid_output`
-  failures, the time per resume, and the quality of Kazakh extraction. Check the cost on
-  the DeepSeek platform usage page.
-- If replies often fail validation, improve the JSON instruction in
-  `openai_compat.py` (for example a compact example object) rather than loosening the
-  schemas.
-- Add a commented DeepSeek block to `.env.example` (README's Configuration table lists the
-  variables).
-- **Done when:** the smoke tests pass live, a full sample batch completes with at most one
-  failure, and the findings are written into `PROGRESS.md`.
+- Add a commented DeepSeek block to `.env.example`. README's Configuration table lists the
+  variables. Keep Gemini as the commented alternative, and do not touch `.env` itself.
+- Log token usage per batch at INFO level: prompt, cache-hit and completion tokens from
+  `response.usage`, summed per session in `jobs.py`. The owner can then see what a batch
+  cost without opening the DeepSeek dashboard. Never log resume text or keys.
+- If live batches ever show `invalid_output` failures, improve the JSON instruction in
+  `openai_compat.py` (for example, add a compact example object) rather than loosening
+  the schemas.
+- **Done when:** `.env.example` documents both providers, and a finished batch logs one
+  usage line, covered by a test.
 
 ### 2. Review the teammate's export commit (`f5c7074`)
 

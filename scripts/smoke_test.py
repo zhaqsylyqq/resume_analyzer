@@ -117,6 +117,9 @@ def main() -> int:
     group.add_argument("--pipeline", action="store_true")
     group.add_argument("--bias", action="store_true")
     args = parser.parse_args()
+    # Windows consoles and pipes default to a legacy code page that cannot print RU/KK text.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     load_dotenv()
     provider = (os.environ.get("LLM_PROVIDER") or "gemini").strip().lower()

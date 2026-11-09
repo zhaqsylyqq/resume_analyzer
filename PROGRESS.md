@@ -11,7 +11,7 @@
 | 5 | B1 bias check + B2 diversity | done |
 | 6 | Polish, README, Dockerfile | done |
 | 7 | Sprint 2 (SIS 8–9): US7 Excel/PDF export, language diversity, API savings | done |
-| 8 | F7b DeepSeek provider + prepaid-balance (402) handling | done, not yet verified live |
+| 8 | F7b DeepSeek provider + prepaid-balance (402) handling | done, verified live |
 
 ## Done
 - Phase 0: app factory, env-based config, CSRF + security headers, RU/KK i18n, design system
@@ -71,10 +71,17 @@
   prepaid balance) on either provider fails the batch fast with a `billing_exhausted`
   RU/KK message. `smoke_test.py` honours `LLM_PROVIDER`. 14 new tests, 208 in total. Why:
   the Gemini paid tier asked for a $30 first prepayment, while DeepSeek works with ~$5.
+  - Verified live on 2026-11-10: ping, `--pipeline` (score 92 in RU and KK, demographics
+    kept apart) and `--bias` (7 of 7 issues found, as with Gemini) all pass.
+  - Full batch of 20 samples x 2 vacancies (RU Python, KK data analyst): 20/20 done with
+    no retries, 125 s (about 6 s per resume), 40 calls.
+  - Tokens: 55k prompt (60% cache hit) and 17.5k completion, i.e. about
+    $0.0007–0.0014 per resume. $5 covers roughly 3 500–7 000 resumes.
+  - Fixed: `smoke_test.py` crashed printing RU/KK text on Windows consoles (cp1252); it
+    now writes UTF-8.
 
 ## Next (backlog)
-- Verify DeepSeek live: `python scripts/smoke_test.py --pipeline` with a real key (RU and
-  KK), then a full sample batch; check Kazakh extraction quality.
+- `.env.example` DeepSeek block; per-batch token-usage log line (see AGENTS.md task 1).
 - F5 Market feedback on the vacancy (explicitly out of scope for now).
 - Build and run the Docker image (Docker daemon was not running during phase 6).
 - Optional: proactive client-side RPM limiter to avoid free-tier 429s entirely; an ETA on
@@ -90,3 +97,6 @@
   a model that often ignores the schema shows up as `invalid_output` failures.
 - DeepSeek prices are doubled at peak hours (01:00–04:00 and 06:00–10:00 UTC, weekdays).
 - `.env.example` has no DeepSeek block yet; the variables are documented in README.
+- The first live DeepSeek call once ran for over 3 minutes before succeeding on a rerun.
+  DeepSeek may hold requests under load (the client timeout is 300 s), so a slow first
+  resume is not necessarily an error.
