@@ -13,7 +13,15 @@ from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, current_app
 
 from . import storage
-from .gemini import AnalysisFailed, GeminiError, GeminiService, GeminiUnavailable, QuotaExhausted, get_gemini
+from .gemini import (
+    AnalysisFailed,
+    BillingExhausted,
+    GeminiError,
+    GeminiService,
+    GeminiUnavailable,
+    QuotaExhausted,
+    get_gemini,
+)
 from .schemas import VacancyInput
 
 log = logging.getLogger(__name__)
@@ -99,10 +107,12 @@ def _analyze(app: Flask, service: GeminiService, resume_id: int, language: str) 
         storage.set_resume_status(db, resume_id, storage.ANALYSIS_FAILED, "invalid_output")
     except QuotaExhausted:
         storage.set_resume_status(db, resume_id, storage.ANALYSIS_FAILED, "daily_quota")
+    except BillingExhausted:
+        storage.set_resume_status(db, resume_id, storage.ANALYSIS_FAILED, "billing_exhausted")
     except GeminiUnavailable:
         storage.set_resume_status(db, resume_id, storage.ANALYSIS_FAILED, "unavailable")
     except GeminiError as exc:
-        log.error("Gemini error for resume %s: %s", resume_id, exc)
+        log.error("AI error for resume %s: %s", resume_id, exc)
         storage.set_resume_status(db, resume_id, storage.ANALYSIS_FAILED, "api_error")
     except Exception:  # noqa: BLE001 - one bad resume must not stop the batch
         log.exception("Unexpected failure analyzing resume %s", resume_id)

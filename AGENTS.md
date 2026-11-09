@@ -2,8 +2,8 @@
 
 You are taking over **Enbek Screen**, an HR tool that screens many resumes at once against
 one or more vacancies and returns a ranked Top-N shortlist, with fairness built in. The
-product works end to end today. Your job is to make it ready for real use on a **paid Gemini
-key**: the tasks in [Your tasks](#your-tasks), in order.
+product works end to end today. Your job is to make it ready for real use on a **paid
+DeepSeek key**: the tasks in [Your tasks](#your-tasks), in order.
 
 Read this file, then [`PROGRESS.md`](PROGRESS.md) (status and known issues) and the spec of
 whatever you are about to touch in [`docs/specs/`](docs/specs/). [`README.md`](README.md)
@@ -14,9 +14,15 @@ has the user-facing setup guide.
 - Phases 0–7 are done: batch upload, parsing, Gemini extraction + scoring, sessions with
   append, ranking with Top-N, CSV/Excel/PDF export, bias check, diversity metrics,
   RU/KK UI, Dockerfile, CI.
-- 194 tests pass. Gemini is always mocked in tests.
-- The AI backend stays **Gemini** (decided by the owner). A move to a self-hosted LLM was
-  considered and deferred; do not start it.
+- 208 tests pass. The AI provider is always mocked in tests.
+- `LLM_PROVIDER` selects the AI provider. The owner uses **DeepSeek** (`deepseek-flash`, a
+  prepaid balance of about $5). Gemini still works as a provider. Both go through
+  `GeminiService` in `app/services/gemini.py`, which delegates the HTTP request to a
+  backend: `GeminiBackend` or `openai_compat.OpenAICompatBackend`. See
+  [`docs/specs/F7b-deepseek-provider.md`](docs/specs/F7b-deepseek-provider.md).
+- HTTP 402 (empty prepaid balance) already stops a batch fast with a `billing_exhausted`
+  message.
+- A move to a self-hosted LLM was considered and deferred; do not start it.
 - The latest commit `f5c7074` ("need to check", by a teammate) added Excel/PDF export,
   language diversity and lower API usage. Its tests pass, but nobody has checked it by
   hand yet (task 2).
@@ -41,13 +47,16 @@ Python 3.11+. On Windows use the venv executables directly.
 
 ## Rules (non-negotiable)
 
-- **Secrets.** Keys come only from environment variables (`GEMINI_API_KEY`, `GEMINI_MODEL`,
-  `GEMINI_FALLBACK_MODEL`, …) loaded from `.env`. Never read, print, log or commit `.env`
-  or a key. `.env.example` is the committed template.
-- **Model names** always come from `GEMINI_MODEL` / `GEMINI_FALLBACK_MODEL`, never hardcoded.
-- **Structured output.** Gemini returns JSON against a response schema; validate it with
-  pydantic, retry once on invalid output, then mark the resume `analysis_failed` and keep
-  the batch going. One bad resume must never stop a batch.
+- **Secrets.** Keys come only from environment variables (`LLM_PROVIDER`,
+  `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, …; see the Configuration table in README) loaded
+  from `.env`. Never read, print, log or commit `.env` or a key. `.env.example` is the
+  committed template.
+- **Model names** always come from configuration (`DEEPSEEK_MODEL`, `GEMINI_MODEL`, their
+  `*_FALLBACK_MODEL`), never hardcoded in logic.
+- **Structured output.** The AI returns JSON: Gemini against a response schema, DeepSeek
+  in JSON mode with the schema in the prompt. Validate it with pydantic, retry once on
+  invalid output, then mark the resume `analysis_failed` and keep the batch going. One
+  bad resume must never stop a batch.
 - **Fairness.** Fit scoring must not receive gender, age, photo, marital status,
   nationality, name or contacts. `app/services/anonymize.py` strips them before the
   scoring prompt. Demographics are stored separately and used only in aggregate (B2) with
@@ -75,7 +84,9 @@ app/
                        vacancies.py (ranking, exports, bias check)
   services/
     parsing.py         .pdf/.docx/.txt to text, size/page/zip limits, error codes
-    gemini.py          GeminiService: extract_profile, score, retries, cooldowns, fallback chain
+    gemini.py          GeminiService: extract_profile, score, retries, cooldowns, fallback chain,
+                       402 fast-fail; GeminiBackend; get_gemini() picks the provider
+    openai_compat.py   OpenAICompatBackend + deepseek_backend() (JSON mode, thinking off)
     schemas.py         pydantic schemas = Gemini response schemas
     anonymize.py       demographics-free view for scoring
     jobs.py            background analysis worker per session
@@ -109,26 +120,24 @@ For each task:
 
 ## Your tasks
 
-### 1. Paid-tier readiness (do first)
+### 1. Verify DeepSeek live (do first)
 
-The owner is moving to a paid Gemini key with **Prepay** credits. When the balance reaches
-$0, Gemini answers **HTTP 402** for every request. Right now `RETRYABLE_CODES` in
-`app/services/gemini.py` does not include 402, so each resume fails separately with the
-generic `api_error` and the batch keeps sending requests.
+The DeepSeek backend is implemented and unit-tested, but it has not been run against the
+real API yet.
 
-- Treat 402 like an exhausted quota: fail fast for the rest of the batch with its own error
-  code (for example `billing_exhausted`). Show a clear RU/KK message telling the user to top
-  up the balance in AI Studio, then press "Retry failed".
-- Recheck the model notes. On the pricing page, `gemini-3.5-flash-lite` costs $0.30 / $2.50
-  per 1M input / output tokens, and `gemini-3.1-flash-lite` costs $0.25 / $1.50.
-  `gemini-3.5-flash`, which `PROGRESS.md` names as a fallback, is not on the pricing page.
-  Update `PROGRESS.md` known issues, README and `.env.example` comments so they recommend
-  models that exist. Verify with `python scripts/smoke_test.py --list-models`.
-- Keep `GEMINI_CONCURRENCY` at 2 by default, but document how to raise it after checking
-  the project's paid limits at <https://aistudio.google.com/rate-limit>.
-- **Done when:** a test proves a 402 stops the batch after the first failure with
-  `billing_exhausted`, the message shows in both languages, and the docs name only
-  existing models.
+- Ask the owner to put `LLM_PROVIDER=deepseek` and `DEEPSEEK_API_KEY` into `.env`. Never
+  read `.env` yourself.
+- Run `python scripts/smoke_test.py`, then `--pipeline` (RU and KK scoring) and `--bias`.
+- Then screen the 20 sample resumes in the app. Report the share of `invalid_output`
+  failures, the time per resume, and the quality of Kazakh extraction. Check the cost on
+  the DeepSeek platform usage page.
+- If replies often fail validation, improve the JSON instruction in
+  `openai_compat.py` (for example a compact example object) rather than loosening the
+  schemas.
+- Add a commented DeepSeek block to `.env.example` (README's Configuration table lists the
+  variables).
+- **Done when:** the smoke tests pass live, a full sample batch completes with at most one
+  failure, and the findings are written into `PROGRESS.md`.
 
 ### 2. Review the teammate's export commit (`f5c7074`)
 
@@ -195,7 +204,8 @@ contain personal data, so this blocks real use.
 - **Windows PowerShell 5.1** `Get-Content`/`Set-Content` corrupt UTF-8 (Russian and Kazakh
   text). Edit files with an editor or Python, never with those cmdlets.
 - **Real API calls cost money.** Do not run `smoke_test.py --pipeline` in loops; tests must
-  never reach the network.
+  never reach the network. DeepSeek bills double at peak hours (01:00–04:00 and
+  06:00–10:00 UTC, weekdays).
 - **Uploaded files are not stored**, only their extracted text; do not add file storage
   without a spec and the owner's approval.
 - **Binary samples.** `.odt` files in `samples/bad/` are marked binary in `.gitattributes`.

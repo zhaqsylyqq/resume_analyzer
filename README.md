@@ -17,7 +17,7 @@ kept read-only in [`legacy/`](legacy/).
 | F3 | Session history — every screening is saved in SQLite and can be reopened |
 | F4 | `.pdf` (text layer), `.docx`, `.txt` parsing — no OCR, safe against malformed files |
 | F6 | Append — add resumes or vacancies later; only new work is sent to the AI |
-| F7 | Gemini engine — structured JSON extraction + fit scoring, validated, retried, rate-limit aware |
+| F7 | AI engine (DeepSeek or Gemini) — structured JSON extraction + fit scoring, validated, retried, rate-limit aware |
 | B1 | Bias check — RU/KK/EN lexicon + AI review with explanations and a neutral rewrite |
 | B2 | Diversity — shortlist vs pool by gender, age band and resume language, four-fifths rule, small-cell suppression |
 
@@ -25,8 +25,11 @@ UI in Russian and Kazakh, light/dark theme, responsive down to phone width.
 
 ## Getting started
 
-You need Python 3.11+, Git and a Gemini API key (free at
-<https://aistudio.google.com/apikey>).
+You need Python 3.11+, Git and an API key for one AI provider:
+
+- **DeepSeek** (recommended, cheapest): sign in at <https://platform.deepseek.com>, create
+  an API key there and top up the balance at <https://platform.deepseek.com/top_up>.
+- **Gemini**: a key from <https://aistudio.google.com/apikey> (free tier ≈ 10 resumes a day).
 
 ### 1. Get the code
 
@@ -60,13 +63,21 @@ Copy-Item .env.example .env        # Windows (PowerShell)
 cp .env.example .env               # macOS / Linux
 ```
 
-Open `.env` and set `GEMINI_API_KEY` and `GEMINI_MODEL`. Never commit this file; it is
-already git-ignored. See [Configuration](#configuration) for the optional settings.
+Open `.env` and set the provider and its key. For DeepSeek:
+
+```
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=<your key>
+```
+
+For Gemini, set `LLM_PROVIDER=gemini`, `GEMINI_API_KEY` and `GEMINI_MODEL` instead. Never
+commit this file; it is already git-ignored. See [Configuration](#configuration) for the
+optional settings.
 
 ### 4. Check the key (optional)
 
-This makes one real Gemini call and reports whether the key and model work. To see which
-models your key can use, add `--list-models`.
+This makes one real AI call and reports whether the provider, key and model work. To see
+which models your key can use, add `--list-models`.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\smoke_test.py   # Windows (PowerShell)
@@ -97,7 +108,7 @@ Open <http://127.0.0.1:5000>. Press `Ctrl+C` in the terminal to stop the server.
 
 ### Run the tests
 
-Tests mock Gemini, so they need no key and no `.env`:
+Tests mock the AI provider, so they need no key and no `.env`:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q            # Windows (PowerShell)
@@ -112,11 +123,16 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `GEMINI_API_KEY` | — (required) | Gemini API key |
-| `GEMINI_MODEL` | — (required) | Main model; we use the cheapest tier, e.g. `gemini-3.5-flash-lite` |
+| `LLM_PROVIDER` | `gemini` | AI provider: `deepseek` or `gemini` |
+| `DEEPSEEK_API_KEY` | — (required for DeepSeek) | DeepSeek API key |
+| `DEEPSEEK_MODEL` | `deepseek-flash` | DeepSeek model (thinking mode is switched off to save tokens) |
+| `DEEPSEEK_FALLBACK_MODEL` | empty | Optional comma-separated fallback chain, as for Gemini |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | API address; change only for a proxy |
+| `GEMINI_API_KEY` | — (required for Gemini) | Gemini API key |
+| `GEMINI_MODEL` | — (required for Gemini) | Main model, e.g. `gemini-3.5-flash-lite` |
 | `GEMINI_FALLBACK_MODEL` | empty | Comma-separated chain tried while the main model is rate-limited, overloaded or out of daily quota |
-| `GEMINI_CONCURRENCY` | `2` | Parallel Gemini requests (keep low on the free tier) |
-| `GEMINI_MAX_RETRIES` | `5` | Retries on 429/5xx before a resume is marked failed |
+| `GEMINI_CONCURRENCY` | `2` | Parallel AI requests, for either provider |
+| `GEMINI_MAX_RETRIES` | `5` | Retries on 429/5xx before a resume is marked failed, for either provider |
 | `FLASK_SECRET_KEY` | generated | Session secret; generated into `instance/.secret_key` if unset |
 | `SESSION_COOKIE_SECURE` | `0` | Set to `1` when served over HTTPS |
 
@@ -205,18 +221,22 @@ app/
   __init__.py          create_app(), error handlers
   config.py  i18n.py  security.py
   routes/              core.py, sessions.py, screening.py, vacancies.py
-  services/            parsing, gemini, anonymize, scoring, storage, jobs, bias, diversity
-  prompts/             Gemini prompt templates
+  services/            parsing, gemini (AI engine + Gemini backend), openai_compat (DeepSeek
+                       backend), anonymize, scoring, storage, jobs, bias, diversity
+  prompts/             AI prompt templates
   templates/  static/
 docs/specs/            one spec per feature
 samples/               synthetic RU/KK resumes, vacancies and bad files
 scripts/               smoke_test.py, make_samples.py
-tests/                 pytest suite (Gemini mocked)
+tests/                 pytest suite (AI provider mocked)
 legacy/                original Enbek prototype, read-only
 ```
 
 ## Troubleshooting
 
+- **"AI service balance is exhausted".** The provider answered HTTP 402: the prepaid balance
+  is used up. The batch stops at once instead of calling an empty account. Top up
+  (DeepSeek: <https://platform.deepseek.com/top_up>), then press "Retry failed".
 - **"Daily limit exhausted".** The free tier allows about 20 requests per model per day,
   and each resume needs two — roughly 10 resumes per model per day. Every model in
   `GEMINI_FALLBACK_MODEL` has its own quota (the `-lite` models work well), so a chain of

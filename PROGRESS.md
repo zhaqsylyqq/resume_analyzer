@@ -11,6 +11,7 @@
 | 5 | B1 bias check + B2 diversity | done |
 | 6 | Polish, README, Dockerfile | done |
 | 7 | Sprint 2 (SIS 8–9): US7 Excel/PDF export, language diversity, API savings | done |
+| 8 | F7b DeepSeek provider + prepaid-balance (402) handling | done, not yet verified live |
 
 ## Done
 - Phase 0: app factory, env-based config, CSRF + security headers, RU/KK i18n, design system
@@ -63,15 +64,29 @@
   prompt, resumes cut at 20 000 chars, 5 retries instead of 10. Exports and diversity make
   no AI calls (covered by a test). 14 new tests, 194 in total.
 
+- Phase 8 (F7b, [spec](docs/specs/F7b-deepseek-provider.md)): `LLM_PROVIDER=deepseek` runs
+  the engine on DeepSeek (`deepseek-flash`, JSON mode, schema in the system prompt, thinking
+  off) via `openai_compat.OpenAICompatBackend`. `GeminiService` now delegates the request
+  to a backend, while retries, cooldowns and validation stay shared. HTTP 402 (empty
+  prepaid balance) on either provider fails the batch fast with a `billing_exhausted`
+  RU/KK message. `smoke_test.py` honours `LLM_PROVIDER`. 14 new tests, 208 in total. Why:
+  the Gemini paid tier asked for a $30 first prepayment, while DeepSeek works with ~$5.
+
 ## Next (backlog)
+- Verify DeepSeek live: `python scripts/smoke_test.py --pipeline` with a real key (RU and
+  KK), then a full sample batch; check Kazakh extraction quality.
 - F5 Market feedback on the vacancy (explicitly out of scope for now).
 - Build and run the Docker image (Docker daemon was not running during phase 6).
 - Optional: proactive client-side RPM limiter to avoid free-tier 429s entirely; an ETA on
   the session page; OCR for scanned PDFs if it ever becomes in scope.
 
 ## Known issues / notes
-- `gemini-2.5-flash` is no longer available to new API keys; default model is `gemini-3.8-flash`
-  with `gemini-3.5-flash` as fallback. On the free tier `gemini-3.8-flash` is mostly 429/503,
-  so traffic flows to the fallback; throughput is roughly 4–5 requests/minute, i.e. about
-  30–40 s per resume (2 calls each). A paid key or `GEMINI_MODEL=gemini-3.5-flash` avoids
-  the wasted first attempt.
+- Gemini models: `gemini-2.5-flash` is no longer available to new keys. `gemini-3.5-flash`
+  (the old fallback) is not on the current pricing page; use `gemini-3.5-flash-lite` with
+  `gemini-3.1-flash-lite` as fallback. On the free tier `gemini-3.8-flash` is mostly 429/503.
+- The Gemini paid tier may ask for a $30 first prepayment ("for security reasons") on new
+  billing accounts; that is why DeepSeek was added.
+- DeepSeek has no response schemas: outputs are validated by pydantic and retried once, so
+  a model that often ignores the schema shows up as `invalid_output` failures.
+- DeepSeek prices are doubled at peak hours (01:00–04:00 and 06:00–10:00 UTC, weekdays).
+- `.env.example` has no DeepSeek block yet; the variables are documented in README.

@@ -17,6 +17,13 @@ def _int_env(name: str, default: int) -> int:
 def settings_from_env() -> dict[str, Any]:
     """Build settings from the current environment (call after load_dotenv)."""
     return {
+        # AI provider: "gemini" or "deepseek"
+        "LLM_PROVIDER": os.environ.get("LLM_PROVIDER", "gemini").strip().lower(),
+        # DeepSeek (OpenAI-compatible API)
+        "DEEPSEEK_API_KEY": os.environ.get("DEEPSEEK_API_KEY", ""),
+        "DEEPSEEK_MODEL": os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
+        "DEEPSEEK_FALLBACK_MODEL": os.environ.get("DEEPSEEK_FALLBACK_MODEL", ""),
+        "DEEPSEEK_BASE_URL": os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         # Gemini
         "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
         "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", ""),

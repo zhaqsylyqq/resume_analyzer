@@ -1,4 +1,4 @@
-"""Real Gemini calls to verify GEMINI_API_KEY, GEMINI_MODEL and the app's schemas.
+"""Real AI calls to verify the configured provider, key, model and the app's schemas.
 
 Usage:
     python scripts/smoke_test.py               # structured JSON round-trip
@@ -6,7 +6,9 @@ Usage:
     python scripts/smoke_test.py --pipeline    # extract + score one synthetic resume
     python scripts/smoke_test.py --bias        # AI bias check of the biased sample vacancy
 
-The key is read from the environment (or .env) and is never printed.
+LLM_PROVIDER selects the provider: "gemini" (GEMINI_API_KEY, GEMINI_MODEL) or "deepseek"
+(DEEPSEEK_API_KEY, DEEPSEEK_MODEL). Keys are read from the environment (or .env) and are
+never printed.
 """
 from __future__ import annotations
 
@@ -18,8 +20,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dotenv import load_dotenv
-from google import genai
-from google.genai import errors, types
 from pydantic import BaseModel
 
 SAMPLE_RESUME = """Иванова Мария Сергеевна
@@ -43,27 +43,19 @@ class Ping(BaseModel):
     language: str
 
 
-def ping(client: genai.Client, model: str) -> int:
-    response = client.models.generate_content(
-        model=model,
-        contents='Reply with ok=true and the ISO code of the language of: "Сәлеметсіз бе"',
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=Ping,
-            temperature=0,
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        ),
+def ping(service, model: str) -> int:
+    result = service.generate(
+        "You are a test endpoint.",
+        'Reply with ok=true and the ISO code of the language of: "Сәлеметсіз бе"',
+        Ping,
     )
-    result = Ping.model_validate_json(response.text)
     print(f"OK: model={model} response={result.model_dump()}")
     return 0 if result.ok else 1
 
 
-def pipeline(client: genai.Client, model: str) -> int:
-    from app.services.gemini import GeminiService
+def pipeline(service) -> int:
     from app.services.schemas import VacancyInput
 
-    service = GeminiService(client, model, os.environ.get("GEMINI_FALLBACK_MODEL"))
     profile = service.extract_profile(SAMPLE_RESUME, "ru")
     print(f"extract: headline={profile.headline!r} years={profile.total_experience_years} "
           f"skills={len(profile.skills)} demographics={profile.demographics.model_dump()}")
@@ -74,18 +66,48 @@ def pipeline(client: genai.Client, model: str) -> int:
     return 0
 
 
-def bias_check(client: genai.Client, model: str) -> int:
+def bias_check(service) -> int:
     from app.services import bias
-    from app.services.gemini import GeminiService
 
     text = (Path(__file__).resolve().parent.parent / "samples" / "vacancy_accountant_biased_ru.txt").read_text(encoding="utf-8")
-    service = GeminiService(client, model, os.environ.get("GEMINI_FALLBACK_MODEL"))
     report = bias.check(text, "ru", service)
     print(f"bias: ai_checked={report['ai_checked']} counts={report['counts']}")
     for f in report["findings"]:
         print(f"  [{f['source']}/{f['severity']}/{f['category']}] {f['phrase']!r} {f['explanation'][:80]}")
     print(f"rewrite: {report['rewrite'][:160]!r}")
     return 0 if report["ai_checked"] else 1
+
+
+def build(provider: str):
+    """Return (raw client for --list-models, backend-or-client for GeminiService, model, fallback)."""
+    if provider == "deepseek":
+        from app.services.openai_compat import deepseek_backend
+
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise SystemExit("FAIL: DEEPSEEK_API_KEY is not set (check .env)")
+        backend = deepseek_backend(api_key, os.environ.get("DEEPSEEK_BASE_URL") or "https://api.deepseek.com")
+        return (backend.client, backend, os.environ.get("DEEPSEEK_MODEL") or "deepseek-flash",
+                os.environ.get("DEEPSEEK_FALLBACK_MODEL"))
+    if provider == "gemini":
+        from google import genai
+
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise SystemExit("FAIL: GEMINI_API_KEY is not set (check .env)")
+        client = genai.Client(api_key=api_key)
+        return client, client, os.environ.get("GEMINI_MODEL"), os.environ.get("GEMINI_FALLBACK_MODEL")
+    raise SystemExit(f"FAIL: unknown LLM_PROVIDER {provider!r} (use 'gemini' or 'deepseek')")
+
+
+def list_models(provider: str, client) -> None:
+    if provider == "deepseek":
+        for m in client.models.list():
+            print(m.id)
+        return
+    for m in client.models.list():
+        if "generateContent" in (getattr(m, "supported_actions", None) or []):
+            print(m.name)
 
 
 def main() -> int:
@@ -97,27 +119,25 @@ def main() -> int:
     args = parser.parse_args()
 
     load_dotenv()
-    api_key = os.environ.get("GEMINI_API_KEY")
-    model = os.environ.get("GEMINI_MODEL")
-    if not api_key:
-        print("FAIL: GEMINI_API_KEY is not set (check .env)")
-        return 1
-    client = genai.Client(api_key=api_key)
+    provider = (os.environ.get("LLM_PROVIDER") or "gemini").strip().lower()
+    raw_client, client, model, fallback = build(provider)
+    print(f"provider={provider}")
+
+    from app.services.gemini import GeminiError, GeminiService
 
     try:
         if args.list_models:
-            for m in client.models.list():
-                if "generateContent" in (getattr(m, "supported_actions", None) or []):
-                    print(m.name)
+            list_models(provider, raw_client)
             return 0
         if not model:
-            print("FAIL: GEMINI_MODEL is not set (check .env)")
+            print("FAIL: the model is not set (GEMINI_MODEL / DEEPSEEK_MODEL in .env)")
             return 1
+        service = GeminiService(client, model, fallback)
         if args.bias:
-            return bias_check(client, model)
-        return pipeline(client, model) if args.pipeline else ping(client, model)
-    except errors.APIError as exc:
-        print(f"FAIL: Gemini API error {exc.code}: {exc.message}")
+            return bias_check(service)
+        return pipeline(service) if args.pipeline else ping(service, model)
+    except GeminiError as exc:
+        print(f"FAIL: {type(exc).__name__}: {exc}")
     except Exception as exc:  # noqa: BLE001 - report any failure as a smoke-test failure
         print(f"FAIL: {type(exc).__name__}: {exc}")
     return 1
