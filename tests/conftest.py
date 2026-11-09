@@ -15,6 +15,10 @@ def app(tmp_path):
             "SECRET_KEY": "test-secret",
             "DATABASE": str(tmp_path / "test.db"),
             "SYNC_JOBS": True,
+            # Pin the provider: a developer's .env (e.g. LLM_PROVIDER=deepseek with a real key)
+            # must never route tests to a live API.
+            "LLM_PROVIDER": "gemini",
+            "DEEPSEEK_API_KEY": "",
             "GEMINI_API_KEY": "test-key",
             "GEMINI_MODEL": "test-model",
             "GEMINI_FALLBACK_MODEL": "",
