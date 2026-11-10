@@ -7,6 +7,9 @@ vacancy texts are checked for biased wording, and shortlists get aggregate diver
 Rebuilt from the Enbek prototype (single-person career advice form); the original code is
 kept read-only in [`legacy/`](legacy/).
 
+> **Команде:** что сделать на сервере после обновления и как собрать пользователей для
+> зачёта — в [`TEAMMATE.md`](TEAMMATE.md) (на русском).
+
 ## Features
 
 | ID | Feature |
