@@ -35,8 +35,7 @@ def test_post_with_wrong_csrf_token_is_rejected(app_with_post):
     assert client.post("/_probe", headers={"X-CSRF-Token": "nope"}).status_code == 400
 
 
-def test_post_with_csrf_header_or_form_field_is_accepted(app_with_post):
-    client = app_with_post.test_client()
+def test_post_with_csrf_header_or_form_field_is_accepted(app_with_post, client):
     html = client.get("/").get_data(as_text=True)
     token = html.split('name="csrf-token" content="')[1].split('"')[0]
     assert client.post("/_probe", headers={"X-CSRF-Token": token}).status_code == 200

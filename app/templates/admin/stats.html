@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}{{ t('stats.title') }}{% endblock %}
+{% macro when(value) -%}
+  {%- if value -%}<time datetime="{{ value }}" data-local-time>{{ value[:16] | replace('T', ' ') }}</time>{%- else -%}—{%- endif -%}
+{%- endmacro %}
+{% set s = data.summary %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ t('stats.title') }}</h1>
+    <p class="muted">{{ t('stats.lead') }}</p>
+  </div>
+  <a class="btn btn--primary" href="{{ url_for('auth.stats_xlsx', days=period.days) }}" download>
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M7 11l5 5 5-5M5 20h14"/></svg>
+    {{ t('stats.download') }}
+  </a>
+</div>
+
+<div class="row row--between mb-4">
+  <div class="segmented" role="group" aria-label="{{ t('stats.period') }}">
+    <a href="{{ url_for('auth.stats') }}" class="{{ 'is-active' if period.days is none }}" {% if period.days is none %}aria-current="true"{% endif %}>{{ t('stats.period.all') }}</a>
+    {% for d in periods %}
+      <a href="{{ url_for('auth.stats', days=d) }}" class="{{ 'is-active' if period.days == d }}" {% if period.days == d %}aria-current="true"{% endif %}>{{ t('stats.period.days', days=d) }}</a>
+    {% endfor %}
+  </div>
+  <span class="muted small">{{ t('stats.tz', offset='%+d' % offset) }}</span>
+</div>
+
+<div class="stats stats--6 mb-4">
+  <div class="stat"><div class="stat__value">{{ s.users_total }}</div><div class="stat__label">{{ t('stats.users_total') }}{% if period.days %} · +{{ s.users_new }}{% endif %}</div></div>
+  <div class="stat"><div class="stat__value">{{ s.signed_in }}</div><div class="stat__label">{{ t('stats.signed_in') }}</div></div>
+  <div class="stat"><div class="stat__value">{{ s.active }}</div><div class="stat__label">{{ t('stats.active') }}</div></div>
+  <div class="stat"><div class="stat__value">{{ s.sessions }}</div><div class="stat__label">{{ t('stats.sessions') }}</div></div>
+  <div class="stat"><div class="stat__value">{{ s.resumes }}</div><div class="stat__label">{{ t('stats.resumes') }}</div></div>
+  <div class="stat"><div class="stat__value">{{ s.exports }}</div><div class="stat__label">{{ t('stats.exports') }}</div></div>
+</div>
+
+<section class="card mb-4" aria-labelledby="chart-title">
+  <div class="card__header">
+    <h2 id="chart-title">{{ t('stats.chart') }}</h2>
+    <div class="legend">
+      <span><span class="legend__swatch"></span>{{ t('stats.col.users') }}</span>
+      <span><span class="legend__swatch legend__swatch--pool"></span>{{ t('stats.sessions') }}</span>
+    </div>
+  </div>
+  {% set n = data.chart | length %}
+  {% set slot = 1000 / n %}
+  {% set bar = [slot * 0.36, 14] | min %}
+  <svg class="usage-chart" viewBox="0 0 1000 220" role="img" aria-label="{{ t('stats.chart') }}" preserveAspectRatio="none">
+    <line class="usage-chart__axis" x1="0" y1="200" x2="1000" y2="200"/>
+    {% for d in data.chart %}
+      {% set x = slot * loop.index0 + slot / 2 %}
+      {% set hu = 180 * d.users / data.peak %}
+      {% set hs = 180 * d.sessions / data.peak %}
+      <rect class="usage-chart__users" x="{{ (x - bar - 1) | round(1) }}" y="{{ (200 - hu) | round(1) }}" width="{{ bar | round(1) }}" height="{{ hu | round(1) }}"><title>{{ d.day }}: {{ d.users }}</title></rect>
+      <rect class="usage-chart__sessions" x="{{ (x + 1) | round(1) }}" y="{{ (200 - hs) | round(1) }}" width="{{ bar | round(1) }}" height="{{ hs | round(1) }}"><title>{{ d.day }}: {{ d.sessions }}</title></rect>
+    {% endfor %}
+  </svg>
+  <div class="row row--between small muted mt-2">
+    <span>{{ data.chart[0].day }}</span><span>{{ t('stats.peak', n=data.peak) }}</span><span>{{ data.chart[-1].day }}</span>
+  </div>
+</section>
+
+<section class="mb-4" aria-labelledby="users-title">
+  <h2 id="users-title">{{ t('stats.users_table') }}</h2>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th scope="col">{{ t('auth.username') }}</th>
+          <th scope="col">{{ t('stats.col.registered') }}</th>
+          <th scope="col">{{ t('stats.col.first_login') }}</th>
+          <th scope="col">{{ t('stats.col.last_login') }}</th>
+          <th scope="col" class="num">{{ t('stats.logins') }}</th>
+          <th scope="col" class="num">{{ t('stats.sessions') }}</th>
+          <th scope="col" class="num">{{ t('stats.resumes') }}</th>
+          <th scope="col" class="num">{{ t('stats.exports') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in data.users %}
+        <tr>
+          <td><strong>{{ u.username }}</strong> <span class="muted small">{{ t('role.' ~ u.role) }}</span></td>
+          <td class="small">{{ when(u.created_at) }}</td>
+          <td class="small">{{ when(u.first_login) }}</td>
+          <td class="small">{{ when(u.last_login) }}</td>
+          <td class="num">{{ u.logins }}</td>
+          <td class="num">{{ u.sessions }}</td>
+          <td class="num">{{ u.resumes }}</td>
+          <td class="num">{{ u.exports }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<details class="more">
+  <summary>{{ t('stats.daily_table') }}</summary>
+  <div class="table-wrap mt-2">
+    <table class="table">
+      <thead><tr><th scope="col">{{ t('stats.col.day') }}</th><th scope="col" class="num">{{ t('stats.col.users') }}</th><th scope="col" class="num">{{ t('stats.logins') }}</th><th scope="col" class="num">{{ t('stats.sessions') }}</th><th scope="col" class="num">{{ t('stats.exports') }}</th><th scope="col" class="num">{{ t('stats.col.registrations') }}</th></tr></thead>
+      <tbody>
+        {% for d in data.daily | reverse %}
+        <tr><td>{{ d.day }}</td><td class="num">{{ d.users }}</td><td class="num">{{ d.logins }}</td><td class="num">{{ d.sessions }}</td><td class="num">{{ d.exports }}</td><td class="num">{{ d.registrations }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+<p class="hint mt-4">{{ t('stats.note') }}</p>
+{% endblock %}

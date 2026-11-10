@@ -12,6 +12,13 @@
 | 6 | Polish, README, Dockerfile | done |
 | 7 | Sprint 2 (SIS 8–9): US7 Excel/PDF export, language diversity, API savings | done |
 | 8 | F7b DeepSeek provider + prepaid-balance (402) handling | done, verified live |
+| 9 | F7c token usage per batch + DeepSeek in `.env.example` (AGENTS task 1) | done |
+| 10 | Review of the export commit `f5c7074` (AGENTS task 2) | done, verified live |
+| 11 | A1 login, roles, audit log (AGENTS task 3) | done |
+| 12 | R1 data retention + database backups (AGENTS task 4) | done |
+| 13 | Q1 fair round-robin queue + ETA (AGENTS task 5) | done |
+| 14 | Docker check (AGENTS task 6) | done |
+| 15 | S1 usage statistics + sign-up with invite code | done |
 
 ## Done
 - Phase 0: app factory, env-based config, CSRF + security headers, RU/KK i18n, design system
@@ -80,12 +87,82 @@
   - Fixed: `smoke_test.py` crashed printing RU/KK text on Windows consoles (cp1252); it
     now writes UTF-8.
 
+- Phase 9 (F7c, [spec](docs/specs/F7c-usage-logging.md)): both backends report the token
+  counts every reply carries (DeepSeek `prompt_cache_hit_tokens`, OpenAI `cached_tokens`,
+  Gemini `usage_metadata`) into a `UsageCounter` bound per batch with `usage_scope()`; the
+  job runner logs one INFO line per finished batch (resumes, requests, prompt / cache-hit /
+  completion tokens), never content or keys. `.env.example` now starts with a DeepSeek
+  block, Gemini kept as a commented alternative. 5 new tests, 213 in total. No live run was
+  needed: there were no `invalid_output` failures to fix in the JSON instruction.
+
+- Phase 10 (review of `f5c7074`, AGENTS task 2): read the diff against the rules (no
+  demographics in exports, routes scoped by session, CSP untouched, RU+KK keys, model names
+  from config) and exercised the exports with a mocked provider. Found and fixed:
+  - Excel export crashed (500) when AI text contained a control character (`\x01`,
+    `\x0b` ...), which xlsx forbids; such characters are now removed.
+  - Excel showed a leading `'` on text starting with `= + - @` (for example a strength
+    written as "- опыт"). Cells are now typed as strings instead: shown as written, never
+    evaluated (verified in LibreOffice and by checking the sheet XML has no formulas).
+  Checked and fine: Cyrillic/Kazakh in PDF, numbers numeric in Excel, CSV unchanged,
+  404 for foreign ids, no AI calls on export. 1 new test, 214 in total.
+  Live run on 2026-11-10 (DeepSeek `deepseek-flash`, 5 sample resumes × 2 vacancies, RU
+  Python + KK data analyst): 5/5 done; Excel per vacancy and per session open, scores
+  numeric, no formula cells, no demographic columns; PDFs show Russian and Kazakh letters;
+  CSV has the BOM. Usage line: 10 requests, prompt 13 853 tokens (8 960 cache hit),
+  completion 4 532 tokens, i.e. under $0.001 per resume.
+
+- Phase 11 (A1, [spec](docs/specs/A1-auth.md)): login with Argon2id password hashes
+  (`argon2-cffi`), roles `recruiter` / `admin`, `sessions.owner_id` (added by an in-place
+  migration; old sessions stay ownerless and admin-only), every query and route scoped by
+  owner (404 for foreign sessions, including status, upload, analyze, exports, bias
+  re-check and delete), admin pages for users and the audit log, `flask create-admin`
+  CLI, in-memory rate limit for failed logins, session renewal on login and sign-out on
+  password change or deactivation. RU/KK UI. 40 new tests (254 in total); existing tests
+  now sign in as a test recruiter. Checked in the browser (RU, KK, phone width).
+
+- Phase 12 (R1, [spec](docs/specs/R1-retention-backup.md)): `RETENTION_DAYS` (default 90,
+  0 = off) deletes sessions not changed for that long, with all child rows, at start, once
+  a day on a request and via `flask purge-old [--days N]`; running jobs are skipped; each
+  deletion is audited as `session_purge`. `scripts/backup_db.py` copies the DB with the
+  SQLite backup API, runs `integrity_check`, rotates (`--keep`, default 14) and is in the
+  Docker image. README documents scheduling (Task Scheduler, cron, Docker). 11 new tests,
+  265 in total.
+
+- Phase 13 (Q1, [spec](docs/specs/Q1-fair-queue-eta.md)): the per-session worker thread is
+  replaced by one process-wide pool of `GEMINI_CONCURRENCY` workers and a rotation of
+  sessions; each turn claims one resume, so sessions alternate (a session added later gets
+  every other turn at once). Batches still end with one usage log line; the race fixes
+  (resume queued while a job finishes, vacancy added mid-scoring) keep their tests.
+  `resumes.started_at` (migration) feeds the ETA: average of the last 20 analyzed resumes
+  × round-robin turns ÷ workers, shown on the session page and in `/status`
+  (`eta_seconds`, `eta_label`), RU/KK. 12 new tests, 277 in total. Checked in the
+  browser with a slowed-down fake provider.
+
+- Phase 14 (Docker check, AGENTS task 6): built and ran the image on Docker 29; checked
+  `/healthz` (container `healthy`), login redirect, `flask create-admin` via `docker exec`,
+  a screening of all 20 samples against 2 vacancies through the DeepSeek backend pointed
+  at an OpenAI-compatible stand-in server (no real key), Excel/PDF export, audit log,
+  `backup_db.py` inside the container, and data after `docker restart` and after
+  recreating the container on the same volume. README Docker section rewritten to match.
+  The check found a real bug in phase 13: two workers could claim the same resume (20
+  resumes cost 50 requests instead of 40). `claim_pending` now takes the write lock first
+  (`BEGIN IMMEDIATE`) and only updates rows still pending; a 6-thread test covers it
+  (278 tests). Backup folders are created with mode 750.
+
+- Phase 15 (S1, [spec](docs/specs/S1-usage-stats-and-signup.md)): the course grade needs
+  proof of 20–30 users. `/admin/stats` shows registered / signed-in / active users,
+  sessions, analyzed resumes and exports (all time, 7 or 30 days, days in UTC+5), an SVG
+  chart by day, a per-user table and an Excel report (summary, by day, users, audit log).
+  `/register` with `INVITE_CODE` lets people create their own recruiter accounts
+  (constant-time code check, rate-limited per IP, audited as `register`). 16 new tests,
+  294 in total. Checked in the browser.
+
 ## Next (backlog)
-- `.env.example` DeepSeek block; per-batch token-usage log line (see AGENTS.md task 1).
+- Deploy the current code to the team server so real users can sign up (set `INVITE_CODE`).
+- Open ideas: proactive RPM limiter, OCR (out of scope).
 - F5 Market feedback on the vacancy (explicitly out of scope for now).
-- Build and run the Docker image (Docker daemon was not running during phase 6).
-- Optional: proactive client-side RPM limiter to avoid free-tier 429s entirely; an ETA on
-  the session page; OCR for scanned PDFs if it ever becomes in scope.
+- Optional: proactive client-side RPM limiter to avoid free-tier 429s entirely; OCR for
+  scanned PDFs if it ever becomes in scope.
 
 ## Known issues / notes
 - Gemini models: `gemini-2.5-flash` is no longer available to new keys. `gemini-3.5-flash`
@@ -96,7 +173,10 @@
 - DeepSeek has no response schemas: outputs are validated by pydantic and retried once, so
   a model that often ignores the schema shows up as `invalid_output` failures.
 - DeepSeek prices are doubled at peak hours (01:00–04:00 and 06:00–10:00 UTC, weekdays).
-- `.env.example` has no DeepSeek block yet; the variables are documented in README.
+- Login rate limiting lives in memory: it resets when the app restarts (fine for one
+  process per database, see AGENTS.md).
+- PDF export: emoji and CJK characters are not in DejaVu Sans and come out blank (a
+  warning is logged). RU/KK/EN text is fully covered.
 - The first live DeepSeek call once ran for over 3 minutes before succeeding on a rerun.
   DeepSeek may hold requests under load (the client timeout is 300 s), so a slow first
   resume is not necessarily an error.

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ t('register.title') }}{% endblock %}
+{% macro field_error(name) %}{% if errors[name] %}<span class="field-error" id="{{ name }}-error">{{ t(errors[name]) }}</span>{% endif %}{% endmacro %}
+{% block content %}
+<div class="auth">
+  <section class="card auth__card">
+    <h1>{{ t('register.title') }}</h1>
+    <p class="muted">{{ t('register.lead') }}</p>
+    {% if errors %}
+      <div class="alert alert--danger mb-4" role="alert"><p>{{ t('form.error.summary') }}</p></div>
+    {% endif %}
+    <form method="post" action="{{ url_for('auth.register') }}" class="stack" novalidate>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field">
+        <label class="label" for="code">{{ t('register.code') }}</label>
+        <input class="input" id="code" name="code" required autocomplete="off" autocapitalize="none" spellcheck="false"
+               maxlength="100" {% if errors.code %}aria-invalid="true" aria-describedby="code-error"{% endif %}>
+        {{ field_error('code') }}
+      </div>
+      <div class="field">
+        <label class="label" for="username">{{ t('auth.username') }}</label>
+        <input class="input" id="username" name="username" required maxlength="64" autocomplete="username"
+               autocapitalize="none" spellcheck="false" value="{{ form.username }}"
+               {% if errors.username %}aria-invalid="true" aria-describedby="username-error"{% endif %}>
+        {% if errors.username %}{{ field_error('username') }}{% else %}<span class="hint">{{ t('auth.error.username') }}</span>{% endif %}
+      </div>
+      <div class="field">
+        <label class="label" for="password">{{ t('auth.password') }}</label>
+        <input class="input" id="password" name="password" type="password" required minlength="10" autocomplete="new-password"
+               {% if errors.password %}aria-invalid="true" aria-describedby="password-error"{% endif %}>
+        {% if errors.password %}{{ field_error('password') }}{% else %}<span class="hint">{{ t('auth.error.password_short') }}</span>{% endif %}
+      </div>
+      <div class="field">
+        <label class="label" for="password2">{{ t('register.password2') }}</label>
+        <input class="input" id="password2" name="password2" type="password" required minlength="10" autocomplete="new-password"
+               {% if errors.password2 %}aria-invalid="true" aria-describedby="password2-error"{% endif %}>
+        {{ field_error('password2') }}
+      </div>
+      <button type="submit" class="btn btn--primary btn--block">{{ t('register.submit') }}</button>
+    </form>
+    <p class="hint mt-4 mb-0"><a href="{{ url_for('auth.login') }}">{{ t('register.have_account') }}</a></p>
+  </section>
+</div>
+{% endblock %}

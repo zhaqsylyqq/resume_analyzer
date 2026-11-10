@@ -1,10 +1,12 @@
-"""F3 — screening sessions: create, list, open, status polling, delete."""
+"""F3 — screening sessions: create, list, open, status polling, delete (scoped by owner, A1)."""
 from __future__ import annotations
 
 import json
 from typing import Any
 
-from flask import Blueprint, abort, current_app, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, abort, current_app, g, jsonify, redirect, render_template, request, url_for
+
+from ..auth import can_access, owner_filter
 
 from ..i18n import get_locale, translate
 from ..services import bias, jobs, storage
@@ -18,8 +20,9 @@ MAX_VACANCY_TEXT = 20_000
 
 
 def load_session_or_404(session_id: int):
+    """The session if the signed-in user may see it; 404 otherwise (never 403: no hints)."""
     session = storage.get_session(storage.get_db(), session_id)
-    if session is None:
+    if session is None or not can_access(session):
         abort(404)
     return session
 
@@ -56,7 +59,7 @@ def resume_json(row) -> dict[str, Any]:
 
 @bp.get("")
 def index():
-    return render_template("sessions/list.html", sessions=storage.list_sessions(storage.get_db()))
+    return render_template("sessions/list.html", sessions=storage.list_sessions(storage.get_db(), owner_id=owner_filter()))
 
 
 @bp.get("/new")
@@ -90,7 +93,8 @@ def create():
         return render_template("sessions/new.html", form=form, errors=errors), 400
 
     db = storage.get_db()
-    session_id = storage.create_session(db, title, language, vacancies)
+    session_id = storage.create_session(db, title, language, vacancies, owner_id=g.user["id"])
+    storage.audit(db, "session_create", g.user, session_id, title)
     for vacancy in storage.list_vacancies(db, session_id):
         storage.save_bias_report(db, vacancy["id"], bias.check(vacancy["text"]))
     return redirect(url_for("sessions.show", session_id=session_id))
@@ -100,6 +104,7 @@ def create():
 def show(session_id: int):
     session = load_session_or_404(session_id)
     db = storage.get_db()
+    storage.audit(db, "session_open", g.user, session_id)
     vacancies = storage.list_vacancies(db, session_id)
     bias_counts = {v["id"]: json.loads(v["bias_json"])["counts"] for v in vacancies if v["bias_json"]}
     return render_template(
@@ -110,22 +115,40 @@ def show(session_id: int):
         resumes=[resume_json(r) for r in storage.list_resumes(db, session_id)],
         progress=storage.progress(db, session_id),
         running=jobs.is_running(session_id),
+        eta=_eta(db, session_id),
     )
+
+
+def _eta(db, session_id: int) -> dict[str, Any] | None:
+    """Q1: time remaining as seconds plus a localized label; None when idle."""
+    if not jobs.is_running(session_id):
+        return None
+    seconds = jobs.eta_seconds(db, session_id, current_app.config["GEMINI_CONCURRENCY"])
+    if seconds is None:
+        return {"seconds": None, "label": translate("eta.estimating")}
+    minutes = -(-seconds // 60)  # round up
+    label = translate("eta.under_minute") if seconds < 60 else translate("eta.minutes", minutes=minutes)
+    return {"seconds": seconds, "label": label}
 
 
 @bp.get("/<int:session_id>/status")
 def status(session_id: int):
     load_session_or_404(session_id)
     db = storage.get_db()
+    eta = _eta(db, session_id)
     return jsonify(
         progress=storage.progress(db, session_id),
         running=jobs.is_running(session_id),
+        eta_seconds=eta["seconds"] if eta else None,
+        eta_label=eta["label"] if eta else None,
         resumes=[resume_json(r) for r in storage.list_resumes(db, session_id)],
     )
 
 
 @bp.post("/<int:session_id>/delete")
 def delete(session_id: int):
-    load_session_or_404(session_id)
-    storage.delete_session(storage.get_db(), session_id)
+    session = load_session_or_404(session_id)
+    db = storage.get_db()
+    storage.delete_session(db, session_id)
+    storage.audit(db, "session_delete", g.user, session_id, session["title"])
     return redirect(url_for("sessions.index"))

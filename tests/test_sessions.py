@@ -81,6 +81,8 @@ def test_restart_recovers_interrupted_work(app, client, csrf, fake_gemini):
     restarted = create_app({"TESTING": True, "SECRET_KEY": "x", "DATABASE": app.config["DATABASE"], "SYNC_JOBS": True})
     restarted.extensions["gemini"] = fake_gemini
     client2 = restarted.test_client()
+    from .conftest import login
+    assert login(client2, "tester").status_code == 302  # the user survives the restart (same DB)
     html = client2.get(f"/sessions/{session_id}").get_data(as_text=True)
     assert "Продолжить анализ" in html
     token = re.search(r'name="csrf-token" content="([^"]+)"', html).group(1)

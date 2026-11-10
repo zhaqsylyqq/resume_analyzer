@@ -9,7 +9,7 @@
       <h3>{{ s.title }}</h3>
       <span class="badge badge--plain">{{ s.language | upper }}</span>
     </div>
-    <p class="muted small">{{ t('sessions.card.meta', vacancies=s.vacancy_count, resumes=s.resume_count) }}</p>
+    <p class="muted small">{{ t('sessions.card.meta', vacancies=s.vacancy_count, resumes=s.resume_count) }}{% if is_admin() %} · {{ t('sessions.card.owner') }}: {{ s.owner_name or '—' }}{% endif %}</p>
     {% set pct = (100 * s.done_count / s.resume_count) | round | int if s.resume_count else 0 %}
     <div class="progress{% if pct == 100 %} progress--success{% endif %}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ pct }}" aria-label="{{ t('sessions.progress') }}">
       <div class="progress__bar" data-width="{{ pct }}"></div>

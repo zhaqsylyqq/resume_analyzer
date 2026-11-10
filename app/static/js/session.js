@@ -22,6 +22,7 @@
   var emptyNote = root.querySelector("[data-resumes-empty]");
   var analysisState = root.querySelector("[data-analysis-state]");
   var retryButton = root.querySelector("[data-retry]");
+  var etaNode = root.querySelector("[data-eta]");
   var pollTimer = null;
   var wasBusy = ds.running === "true";
 
@@ -154,6 +155,7 @@
 
     var busy = data.running;
     analysisState.hidden = !busy;
+    if (etaNode) etaNode.textContent = busy && data.eta_label ? "· " + data.eta_label : "";
     if (wasBusy && !busy) {
       App.toast(ds.msgComplete);
       document.dispatchEvent(new CustomEvent("session:analyzed"));

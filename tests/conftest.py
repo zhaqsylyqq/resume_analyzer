@@ -27,9 +27,46 @@ def app(tmp_path):
     yield app
 
 
+@pytest.fixture(autouse=True)
+def fast_password_hashing(monkeypatch):
+    """Argon2 with production parameters is deliberately slow; tests use cheap ones."""
+    from argon2 import PasswordHasher
+
+    import app.auth as auth
+
+    monkeypatch.setattr(auth, "_hasher", PasswordHasher(time_cost=1, memory_cost=8, parallelism=1))
+
+
+TEST_PASSWORD = "correct-horse-battery"
+
+
+def make_user(app, username, role="recruiter", password=TEST_PASSWORD):
+    from app.auth import hash_password
+    from app.services import storage
+
+    with app.app_context():
+        return storage.create_user(storage.get_db(), username, hash_password(password), role)
+
+
+def login(client, username, password=TEST_PASSWORD):
+    html = client.get("/login").get_data(as_text=True)
+    token = re.search(r'name="csrf-token" content="([^"]+)"', html).group(1)
+    return client.post("/login", data={"csrf_token": token, "username": username, "password": password})
+
+
+@pytest.fixture()
+def anon_client(app):
+    """A client that has not signed in."""
+    return app.test_client()
+
+
 @pytest.fixture()
 def client(app):
-    return app.test_client()
+    """Signed in as the recruiter 'tester' (A1: every page needs login)."""
+    make_user(app, "tester")
+    test_client = app.test_client()
+    assert login(test_client, "tester").status_code == 302
+    return test_client
 
 
 @pytest.fixture()

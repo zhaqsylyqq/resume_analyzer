@@ -4,6 +4,7 @@ from __future__ import annotations
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request
 
 from ..i18n import LANG_COOKIE
+from ..auth import owner_filter
 from ..security import is_safe_redirect
 from ..services import storage
 
@@ -12,7 +13,7 @@ bp = Blueprint("core", __name__)
 
 @bp.get("/")
 def index():
-    return render_template("index.html", sessions=storage.list_sessions(storage.get_db(), limit=6))
+    return render_template("index.html", sessions=storage.list_sessions(storage.get_db(), limit=6, owner_id=owner_filter()))
 
 
 @bp.get("/lang/<code>")

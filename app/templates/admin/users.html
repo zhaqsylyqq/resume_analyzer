@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}{{ t('admin.users') }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ t('admin.users') }}</h1>
+    <p class="muted">{{ t('admin.users.lead') }}</p>
+  </div>
+  <a class="btn" href="{{ url_for('auth.audit_log') }}">{{ t('admin.audit') }}</a>
+</div>
+
+<div class="layout-split">
+  <section class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th scope="col">{{ t('auth.username') }}</th>
+          <th scope="col">{{ t('admin.role') }}</th>
+          <th scope="col">{{ t('admin.status') }}</th>
+          <th scope="col" class="num">{{ t('admin.sessions') }}</th>
+          <th scope="col">{{ t('admin.actions') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        {% set is_self = u.id == g.user.id %}
+        <tr>
+          <td>
+            <strong>{{ u.username }}</strong>{% if is_self %} <span class="muted small">({{ t('admin.you') }})</span>{% endif %}
+            <div class="muted small">{{ t('admin.last_login') }}:
+              {% if u.last_login_at %}<time datetime="{{ u.last_login_at }}" data-local-time>{{ u.last_login_at[:16] | replace('T', ' ') }}</time>{% else %}—{% endif %}
+            </div>
+          </td>
+          <td>
+            <form method="post" action="{{ url_for('auth.update_user', user_id=u.id) }}" class="row">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="role">
+              <label class="sr-only" for="role-{{ u.id }}">{{ t('admin.role') }}</label>
+              <select class="select select--sm" id="role-{{ u.id }}" name="role" {% if is_self %}disabled{% endif %}>
+                {% for r in roles %}<option value="{{ r }}" {% if u.role == r %}selected{% endif %}>{{ t('role.' ~ r) }}</option>{% endfor %}
+              </select>
+              {% if not is_self %}<button type="submit" class="btn btn--sm">{{ t('admin.save') }}</button>{% endif %}
+            </form>
+          </td>
+          <td>
+            <span class="badge badge--{{ 'success' if u.active else 'plain' }}">{{ t('admin.active') if u.active else t('admin.inactive') }}</span>
+          </td>
+          <td class="num">{{ u.session_count }}</td>
+          <td>
+            <div class="stack">
+              {% if not is_self %}
+              <form method="post" action="{{ url_for('auth.update_user', user_id=u.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="toggle">
+                <button type="submit" class="btn btn--sm{% if u.active %} btn--danger{% endif %}">{{ t('admin.deactivate') if u.active else t('admin.activate') }}</button>
+              </form>
+              {% endif %}
+              <details class="more">
+                <summary>{{ t('admin.new_password') }}</summary>
+                <form method="post" action="{{ url_for('auth.update_user', user_id=u.id) }}" class="stack mt-2">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="action" value="password">
+                  <label class="sr-only" for="pw-{{ u.id }}">{{ t('admin.new_password') }}</label>
+                  <input class="input" id="pw-{{ u.id }}" name="password" type="password" minlength="10" required autocomplete="new-password">
+                  <button type="submit" class="btn btn--sm">{{ t('admin.save') }}</button>
+                </form>
+              </details>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <aside>
+    <section class="card">
+      <div class="card__header"><h2>{{ t('admin.add_user') }}</h2></div>
+      <form method="post" action="{{ url_for('auth.create_user') }}" class="stack" novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="field">
+          <label class="label" for="new-username">{{ t('auth.username') }}</label>
+          <input class="input" id="new-username" name="username" required maxlength="64" autocomplete="off" value="{{ form.username }}"
+                 {% if errors.username %}aria-invalid="true" aria-describedby="new-username-error"{% endif %}>
+          {% if errors.username %}<span class="field-error" id="new-username-error">{{ t(errors.username) }}</span>{% endif %}
+        </div>
+        <div class="field">
+          <label class="label" for="new-password">{{ t('auth.password') }}</label>
+          <input class="input" id="new-password" name="password" type="password" required minlength="10" autocomplete="new-password"
+                 {% if errors.password %}aria-invalid="true" aria-describedby="new-password-error"{% endif %}>
+          {% if errors.password %}<span class="field-error" id="new-password-error">{{ t(errors.password) }}</span>{% else %}<span class="hint">{{ t('auth.error.password_short') }}</span>{% endif %}
+        </div>
+        <div class="field">
+          <label class="label" for="new-role">{{ t('admin.role') }}</label>
+          <select class="select" id="new-role" name="role">
+            {% for r in roles %}<option value="{{ r }}" {% if form.role == r %}selected{% endif %}>{{ t('role.' ~ r) }}</option>{% endfor %}
+          </select>
+          {% if errors.role %}<span class="field-error">{{ t(errors.role) }}</span>{% else %}<span class="hint">{{ t('admin.role.hint') }}</span>{% endif %}
+        </div>
+        <button type="submit" class="btn btn--primary btn--block">{{ t('admin.add_user') }}</button>
+      </form>
+    </section>
+  </aside>
+</div>
+{% endblock %}

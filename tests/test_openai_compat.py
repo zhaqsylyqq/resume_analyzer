@@ -166,3 +166,89 @@ def test_get_gemini_rejects_unknown_provider(app):
     app.config.update(LLM_PROVIDER="mystery")
     with app.app_context(), pytest.raises(GeminiError, match="LLM_PROVIDER"):
         get_gemini()
+
+
+# F7c: token usage per batch ----------------------------------------------------------
+
+class UsageCompletions(FakeCompletions):
+    """Like FakeCompletions, but every reply carries DeepSeek-style usage."""
+
+    def __init__(self, handler, usage):
+        super().__init__([])
+        self.handler, self.usage = handler, usage
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        reply = self.handler(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(reply, ensure_ascii=False)))],
+            usage=SimpleNamespace(**self.usage),
+        )
+
+
+def deepseek_reply(kwargs):
+    system = kwargs["messages"][0]["content"]
+    if '"total_experience_years"' in system:
+        return PROFILE
+    import re
+    ids = re.search(r"Vacancy ids to assess: ([\d, ]+)", kwargs["messages"][1]["content"]).group(1)
+    return scoring_reply([int(i) for i in ids.split(",")], score=80)
+
+
+def test_finished_batch_logs_one_usage_line(app, client, csrf, caplog):
+    usage = {"prompt_tokens": 1000, "prompt_cache_hit_tokens": 600, "completion_tokens": 200}
+    backend = OpenAICompatBackend(SimpleNamespace(chat=SimpleNamespace(
+        completions=UsageCompletions(deepseek_reply, usage))), extra_body=DEEPSEEK_EXTRA_BODY)
+    app.extensions["gemini"] = GeminiService(backend, "deepseek-flash", sleep=lambda s: None)
+    session_id = create_session(client, csrf)
+    with caplog.at_level("INFO", logger="app.services.jobs"):
+        upload(client, csrf, session_id, [("a.txt", resume_text(1)), ("b.txt", resume_text(2))])
+    lines = [r.getMessage() for r in caplog.records if "batch done" in r.getMessage()]
+    # 2 resumes x (extract + score) = 4 requests
+    assert lines == [f"Session {session_id} batch done: 2 resumes, 4 requests, "
+                     "prompt 4000 tokens (cache hit 2400), completion 800 tokens"]
+    assert "Кандидат" not in caplog.text and "Python-разработчик" not in caplog.text  # no resume text
+
+
+def test_failed_requests_and_empty_batches_log_no_usage(app, client, csrf, caplog):
+    backend = OpenAICompatBackend(FakeOpenAI([status_error(401, "Authentication Fails")]),
+                                  extra_body=DEEPSEEK_EXTRA_BODY)
+    app.extensions["gemini"] = GeminiService(backend, "deepseek-flash", sleep=lambda s: None)
+    session_id = create_session(client, csrf)
+    with caplog.at_level("INFO", logger="app.services.jobs"):
+        upload(client, csrf, session_id, [("a.txt", resume_text(1))])
+    assert status(client, session_id)["resumes"][0]["status"] == "analysis_failed"
+    assert "batch done" not in caplog.text
+
+
+def test_usage_reads_openai_cached_tokens_and_tolerates_missing_fields():
+    from app.services.gemini import UsageCounter, usage_scope
+    from app.services.openai_compat import _record
+
+    counter = UsageCounter()
+    with usage_scope(counter):
+        _record(SimpleNamespace(prompt_tokens=50, completion_tokens=5,
+                                prompt_tokens_details=SimpleNamespace(cached_tokens=20)))
+        _record(None)  # reply without usage: still one request, zero tokens
+    _record(SimpleNamespace(prompt_tokens=999, completion_tokens=999))  # outside a batch: ignored
+    assert (counter.requests, counter.prompt_tokens, counter.cache_hit_tokens, counter.completion_tokens) == (2, 50, 20, 5)
+
+
+def test_gemini_backend_reports_usage_metadata():
+    from app.services.gemini import GeminiBackend, UsageCounter, usage_scope
+
+    meta = SimpleNamespace(prompt_token_count=300, cached_content_token_count=100, candidates_token_count=40)
+    client = SimpleNamespace(models=SimpleNamespace(
+        generate_content=lambda **kw: SimpleNamespace(text=json.dumps(PROFILE), usage_metadata=meta)))
+    counter = UsageCounter()
+    with usage_scope(counter):
+        GeminiBackend(client).complete("m", "sys", "user", CandidateProfile)
+    assert (counter.requests, counter.prompt_tokens, counter.cache_hit_tokens, counter.completion_tokens) == (1, 300, 100, 40)
+
+
+def test_env_example_documents_both_providers():
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent.parent / ".env.example").read_text(encoding="utf-8")
+    assert "LLM_PROVIDER=deepseek" in text and "DEEPSEEK_API_KEY=" in text and "DEEPSEEK_MODEL=" in text
+    assert "# GEMINI_API_KEY=" in text and "# GEMINI_MODEL=" in text

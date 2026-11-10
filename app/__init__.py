@@ -9,8 +9,10 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException
 
+from .auth import init_auth
 from .config import load_secret_key, settings_from_env
 from .i18n import init_i18n, translate
+from .retention import init_retention
 from .security import init_security
 from .services import storage
 
@@ -34,6 +36,8 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
     init_security(app)
     init_i18n(app)
     storage.init_db(app)
+    init_auth(app)
+    init_retention(app)
     _register_blueprints(app)
     _register_error_handlers(app)
     return app

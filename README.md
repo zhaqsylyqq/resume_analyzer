@@ -20,6 +20,10 @@ kept read-only in [`legacy/`](legacy/).
 | F7 | AI engine (DeepSeek or Gemini) — structured JSON extraction + fit scoring, validated, retried, rate-limit aware |
 | B1 | Bias check — RU/KK/EN lexicon + AI review with explanations and a neutral rewrite |
 | B2 | Diversity — shortlist vs pool by gender, age band and resume language, four-fifths rule, small-cell suppression |
+| A1 | Login and roles — recruiters see only their own sessions, admins see all and manage users; audit log |
+| S1 | Usage statistics for admins (users, sign-ins, sessions, resumes, exports by day; Excel report) and sign-up with an invite code |
+| Q1 | Fair queue — sessions take turns resume by resume; the session page shows the time remaining |
+| R1 | Data retention (sessions untouched for `RETENTION_DAYS` are deleted) and consistent database backups |
 
 UI in Russian and Kazakh, light/dark theme, responsive down to phone width.
 
@@ -86,7 +90,23 @@ which models your key can use, add `--list-models`.
 python scripts/smoke_test.py                       # macOS / Linux
 ```
 
-### 5. Start the app
+### 5. Create the first admin
+
+There is no default user or password. Create an admin once (password input is hidden and
+asked twice; at least 10 characters):
+
+```powershell
+.\.venv\Scripts\flask.exe --app app create-admin    # Windows (PowerShell)
+```
+```bash
+flask --app app create-admin                       # macOS / Linux
+```
+
+More users (recruiters or admins) are added in the app under **Пользователи** (admins only).
+To let classmates or pilot users sign themselves up, set `INVITE_CODE=<some code>` in `.env`
+and share the code: the login page then links to **Регистрация**.
+
+### 6. Start the app
 
 ```powershell
 .\.venv\Scripts\flask.exe --app app run --debug    # Windows (PowerShell)
@@ -95,16 +115,17 @@ python scripts/smoke_test.py                       # macOS / Linux
 flask --app app run --debug                        # macOS / Linux
 ```
 
-Open <http://127.0.0.1:5000>. Press `Ctrl+C` in the terminal to stop the server.
+Open <http://127.0.0.1:5000> and sign in. Press `Ctrl+C` in the terminal to stop the server.
 
-### 6. Try a screening
+### 7. Try a screening
 
 1. Click **Новый скрининг** (**Жаңа іріктеу** in Kazakh).
 2. Enter a job title and paste a vacancy text, for example from
    [`samples/vacancy_python_ru.txt`](samples/vacancy_python_ru.txt).
 3. Upload files from [`samples/resumes/`](samples/resumes/). All people in the samples are
    fictional.
-4. Wait for the analysis to finish, then open the ranking to choose a Top-N and export CSV.
+4. Wait for the analysis to finish, then open the ranking to choose a Top-N and export
+   Excel, PDF or CSV.
 
 ### Run the tests
 
@@ -135,6 +156,9 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 | `GEMINI_MAX_RETRIES` | `5` | Retries on 429/5xx before a resume is marked failed, for either provider |
 | `FLASK_SECRET_KEY` | generated | Session secret; generated into `instance/.secret_key` if unset |
 | `SESSION_COOKIE_SECURE` | `0` | Set to `1` when served over HTTPS |
+| `INVITE_CODE` | empty | Code for self sign-up at `/register` (new users become recruiters); empty turns sign-up off |
+| `STATS_UTC_OFFSET` | `5` | Hours added to UTC when statistics group events by day (Kazakhstan: 5) |
+| `RETENTION_DAYS` | `90` | Sessions not changed for this many days are deleted with all their data; `0` keeps everything |
 
 `python scripts/smoke_test.py --list-models` lists the models your key can use.
 
@@ -143,14 +167,17 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 | Task | Command |
 |------|---------|
 | Run (dev) | `flask --app app run --debug` |
+| Create an admin | `flask --app app create-admin` |
+| Delete old sessions now | `flask --app app purge-old [--days N]` |
+| Back up the database | `python scripts/backup_db.py [--out DIR] [--keep N]` |
 | Run (production) | `waitress-serve --host 0.0.0.0 --port 8000 --call app:create_app` |
 | Tests | `pytest -q` (Gemini is mocked, no key needed) |
 | Smoke test | `python scripts/smoke_test.py [--pipeline \| --bias \| --list-models]` |
 | Regenerate samples | `pip install -r requirements-dev.txt && python scripts/make_samples.py` |
 
-## API usage (keeping Gemini cheap)
+## API usage (keeping the AI bill small)
 
-| What | Gemini requests |
+| What | AI requests |
 |------|-----------------|
 | New resume | 2: profile extraction + one scoring call for **all** vacancies of the session |
 | Vacancy added later | 1 per resume (scoring only; the stored profile is reused) |
@@ -162,22 +189,75 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 Prompts send compact JSON, resumes are cut at 20 000 characters and tests always use a
 fake client, so `pytest` never spends quota.
 
+## Usage statistics
+
+Admins open **Статистика** (`/admin/stats`): registered users, users who signed in, active
+users (created a screening session), sessions, analyzed resumes and exports, for all time
+or the last 7 / 30 days, with a chart by day and a table per user. **Скачать отчёт Excel**
+saves the same data plus the full audit log for the period, ready to hand in as proof of
+usage. Numbers come from the audit log, so they include sessions later removed by
+retention.
+
+## Data retention and backups
+
+**Retention.** Resumes are personal data, so sessions that nobody changed for
+`RETENTION_DAYS` days (default 90) are deleted with everything in them. This runs when the
+app starts, once a day while it runs, and on demand with `flask --app app purge-old`.
+Every deletion is recorded in the audit log as "Автоудаление".
+
+**Backups.** `scripts/backup_db.py` makes a consistent copy of `instance/app.db` (SQLite
+online backup API, safe while the app is running), checks it and keeps the newest 14 in
+`instance/backups/` (`--keep N` to change, `--out DIR` for another folder). Keep copies on
+another disk or cloud folder as well; a backup on the same disk does not survive a disk
+failure. To restore, stop the app and copy a backup over `instance/app.db`.
+
+Schedule it daily:
+
+- **Windows** (Task Scheduler, once, in PowerShell from the project folder):
+  ```powershell
+  schtasks /Create /TN "Enbek Screen backup" /SC DAILY /ST 02:00 /TR "\"$PWD\.venv\Scripts\python.exe\" \"$PWD\scripts\backup_db.py\""
+  ```
+- **Linux / macOS** (`crontab -e`):
+  ```
+  0 2 * * * cd /path/to/resume_analyzer && .venv/bin/python scripts/backup_db.py
+  ```
+- **Docker**: `docker exec <container> python scripts/backup_db.py`, then copy
+  `/app/instance/backups` out of the volume.
+
 ## Docker
 
 ```bash
 docker build -t enbek-screen .
-docker run -p 8000:8000 --env-file .env -v enbek-data:/app/instance enbek-screen
+docker run -d --name enbek -p 8000:8000 --env-file .env -v enbek-data:/app/instance enbek-screen
+docker exec -it enbek flask --app app create-admin      # once: first admin
 ```
 
-The image runs as a non-root user, keeps the SQLite database in the `/app/instance`
-volume and has a health check on `/healthz`. Run exactly **one** container/process per
-database: background analysis runs inside the web process.
+Open <http://127.0.0.1:8000> and sign in.
+
+- The image runs as the non-root user `app` with
+  [waitress](https://docs.pylonsproject.org/projects/waitress/) on port 8000 and has a
+  health check on `/healthz` (`docker ps` shows `healthy`).
+- The SQLite database, the generated session secret and backups live in the
+  `/app/instance` volume, so data survives `docker restart` and replacing the container
+  with a new image (`docker rm -f enbek` + the same `docker run`).
+- Backups: `docker exec enbek python scripts/backup_db.py` writes to
+  `/app/instance/backups`; copy them out with `docker cp enbek:/app/instance/backups .`.
+- Run exactly **one** container per database: the analysis queue runs inside the web
+  process.
+- Behind a corporate proxy that intercepts TLS, `pip install` during `docker build` needs
+  the proxy's CA certificate in the image; the plain build needs nothing extra.
+
+Verified on 2026-11-10 (Docker 29): build, `/healthz`, login required, `create-admin`,
+screening of the 20 sample resumes against 2 vacancies through the DeepSeek code path
+(an OpenAI-compatible stand-in server, no real key in the check), Excel/PDF export, audit
+log, backup inside the container, and data intact after `docker restart` and after
+recreating the container on the same volume.
 
 ## How it works
 
 ```
 upload ─► parsing (F4) ─► resumes: pending
-                              │  background job, ≤ GEMINI_CONCURRENCY requests
+                              │  shared worker pool, sessions take turns (Q1)
                               ▼
             Gemini extraction ─► profile  +  demographics (separate table)
                               │
@@ -194,6 +274,9 @@ vacancy text ─► lexicon + optional Gemini review ─► bias report (B1)
 - **Reliability.** JSON mode with a response schema, pydantic validation, one retry on
   invalid output, then `analysis_failed` without stopping the batch. 429/503 put that model
   on a shared cooldown and traffic switches to the fallback model immediately.
+- **Fair queue.** One pool of `GEMINI_CONCURRENCY` workers serves all sessions in turn,
+  one resume at a time, so a small batch is not stuck behind a big one. The session page
+  shows the time remaining, estimated from the last 20 analyzed resumes.
 - **Append-only.** Files are de-duplicated by SHA-256 per session; adding a vacancy scores
   only the missing (resume, vacancy) pairs.
 
@@ -203,6 +286,11 @@ issues in [`PROGRESS.md`](PROGRESS.md).
 ## Security and privacy
 
 - Secrets only from the environment; the key is never logged or printed.
+- Login required on every page except `/login` and `/healthz`. Passwords are hashed with
+  Argon2id; failed logins are limited (5 per 15 minutes per username and per IP); the
+  session is renewed on login and expires after 12 hours. Recruiters see only their own
+  sessions (other sessions answer 404); admins see all and manage users. Opening,
+  exporting and deleting a session is written to an audit log (`/admin/audit`).
 - CSRF tokens on every state-changing request; strict Content-Security-Policy (no inline
   scripts or styles), `X-Frame-Options: DENY`, `nosniff`, restrictive referrer and
   permissions policies, HSTS over HTTPS, `HttpOnly` + `SameSite=Lax` cookies.

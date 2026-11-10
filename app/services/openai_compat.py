@@ -14,7 +14,7 @@ from typing import Any
 import openai
 from pydantic import BaseModel
 
-from .gemini import ProviderError
+from .gemini import ProviderError, record_usage
 
 JSON_INSTRUCTION = (
     "\n\nOutput format: reply with one json object only, without markdown fences or any other "
@@ -68,10 +68,19 @@ class OpenAICompatBackend:
             raise ProviderError(exc.status_code, _error_message(exc), _retry_after(exc)) from exc
         except openai.APIConnectionError as exc:  # includes timeouts; treated like an overload
             raise ProviderError(503, f"connection failed: {type(exc).__name__}") from exc
+        _record(getattr(response, "usage", None))
         if not response.choices:
             return None
         content = (response.choices[0].message.content or "").strip()
         return content or None
+
+
+def _record(usage: Any) -> None:
+    """Token counts from an OpenAI-style `usage` object (DeepSeek adds prompt_cache_hit_tokens)."""
+    cache_hit = getattr(usage, "prompt_cache_hit_tokens", None)
+    if cache_hit is None:
+        cache_hit = getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", 0)
+    record_usage(getattr(usage, "prompt_tokens", 0), cache_hit, getattr(usage, "completion_tokens", 0))
 
 
 def deepseek_backend(api_key: str, base_url: str) -> OpenAICompatBackend:

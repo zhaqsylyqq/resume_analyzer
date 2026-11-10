@@ -19,6 +19,9 @@ Reliability rules:
 The provider is pluggable: GeminiBackend wraps the google-genai client, and
 openai_compat.OpenAICompatBackend talks to OpenAI-compatible APIs such as DeepSeek
 (LLM_PROVIDER selects one). Retries, cooldowns and validation are shared.
+
+Token usage: backends report the counts each reply carries with record_usage(); the job
+runner binds a UsageCounter per batch with usage_scope() and logs the total (F7c).
 """
 from __future__ import annotations
 
@@ -28,11 +31,14 @@ import random
 import re
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from string import Template
-from typing import Any, Callable, Sequence, TypeVar
+from typing import Any, Callable, Iterator, Sequence, TypeVar
 
 from flask import current_app
 from google import genai
@@ -53,6 +59,48 @@ MAX_MODEL_WAIT = 300.0  # longer than any per-minute cooldown; beyond this, give
 BILLING_BLOCK = 60.0  # after a 402, fail without calling until the user had time to top up
 
 T = TypeVar("T", bound=BaseModel)
+
+
+@dataclass
+class UsageCounter:
+    """Token counts summed over many requests; safe to share between worker threads."""
+
+    requests: int = 0
+    prompt_tokens: int = 0
+    cache_hit_tokens: int = 0
+    completion_tokens: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def add(self, prompt: int = 0, cache_hit: int = 0, completion: int = 0) -> None:
+        with self._lock:
+            self.requests += 1
+            self.prompt_tokens += prompt
+            self.cache_hit_tokens += cache_hit
+            self.completion_tokens += completion
+
+
+_usage: ContextVar[UsageCounter | None] = ContextVar("ai_usage", default=None)
+
+
+@contextmanager
+def usage_scope(counter: UsageCounter) -> Iterator[UsageCounter]:
+    """Send usage of every request made in this thread/context to `counter`."""
+    token = _usage.set(counter)
+    try:
+        yield counter
+    finally:
+        _usage.reset(token)
+
+
+def _int(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def record_usage(prompt: Any = 0, cache_hit: Any = 0, completion: Any = 0) -> None:
+    """Called by backends after a successful reply; ignored outside a usage_scope."""
+    counter = _usage.get()
+    if counter is not None:
+        counter.add(_int(prompt), _int(cache_hit), _int(completion))
 
 
 class GeminiError(Exception):
@@ -158,6 +206,9 @@ class GeminiBackend:
             raise ProviderError(
                 exc.code, str(exc.message), _retry_hint_seconds(exc), exc.code == 429 and _is_daily_quota(exc)
             ) from exc
+        meta = getattr(response, "usage_metadata", None)
+        record_usage(getattr(meta, "prompt_token_count", 0), getattr(meta, "cached_content_token_count", 0),
+                     getattr(meta, "candidates_token_count", 0))
         return response.text
 
 

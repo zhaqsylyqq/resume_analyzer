@@ -1,7 +1,8 @@
 """F3 — SQLite storage for screening sessions, vacancies, resumes and scores.
 
 All SQL uses parameters. Demographics live in their own table with only what B2 needs
-(gender, age) and are never joined into ranking or export queries.
+(gender, age) and are never joined into ranking or export queries. Users, session owners
+and the audit log belong to A1 (login and roles).
 """
 from __future__ import annotations
 
@@ -65,6 +66,25 @@ CREATE TABLE IF NOT EXISTS scores (
     created_at   TEXT NOT NULL,
     PRIMARY KEY (resume_id, vacancy_id)
 );
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY,
+    username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    role          TEXT NOT NULL CHECK (role IN ('recruiter', 'admin')),
+    active        INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL,
+    last_login_at TEXT
+);
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          INTEGER PRIMARY KEY,
+    created_at  TEXT NOT NULL,
+    user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    username    TEXT,
+    action      TEXT NOT NULL,
+    session_id  INTEGER,
+    detail      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_vacancies_session ON vacancies(session_id);
 CREATE INDEX IF NOT EXISTS idx_resumes_session_status ON resumes(session_id, status);
 CREATE INDEX IF NOT EXISTS idx_scores_vacancy ON scores(vacancy_id, score DESC);
@@ -100,6 +120,7 @@ def init_db(app: Flask) -> None:
     db = connect(app.config["DATABASE"])
     try:
         db.executescript(SCHEMA)
+        _migrate(db)
         # Work interrupted by a restart goes back to the queue.
         db.execute("UPDATE resumes SET status = ? WHERE status = ?", (PENDING, PROCESSING))
         db.commit()
@@ -108,14 +129,29 @@ def init_db(app: Flask) -> None:
     app.teardown_appcontext(close_db)
 
 
+def _migrate(db: sqlite3.Connection) -> None:
+    """Additive migrations for databases created by earlier versions."""
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(sessions)")}
+    resume_columns = {row["name"] for row in db.execute("PRAGMA table_info(resumes)")}
+    if "started_at" not in resume_columns:  # Q1: time per resume for the ETA
+        db.execute("ALTER TABLE resumes ADD COLUMN started_at TEXT")
+    if "owner_id" not in columns:
+        # Sessions created before login existed have no owner: only admins see them.
+        db.execute("ALTER TABLE sessions ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_id, updated_at DESC)")
+
+
 # Sessions ---------------------------------------------------------------------------------
 
-def create_session(db: sqlite3.Connection, title: str, language: str, vacancies: Iterable[tuple[str, str]]) -> int:
+def create_session(
+    db: sqlite3.Connection, title: str, language: str, vacancies: Iterable[tuple[str, str]],
+    owner_id: int | None = None,
+) -> int:
     stamp = now()
     with db:
         session_id = db.execute(
-            "INSERT INTO sessions (title, language, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (title, language, stamp, stamp),
+            "INSERT INTO sessions (title, language, created_at, updated_at, owner_id) VALUES (?, ?, ?, ?, ?)",
+            (title, language, stamp, stamp, owner_id),
         ).lastrowid
         for vacancy_title, text in vacancies:
             db.execute(
@@ -133,16 +169,30 @@ def get_session(db: sqlite3.Connection, session_id: int) -> sqlite3.Row | None:
     return db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
 
 
-def list_sessions(db: sqlite3.Connection, limit: int = 100) -> list[sqlite3.Row]:
+ALL_OWNERS = object()  # sentinel: no owner filter (admins)
+
+
+def list_sessions(db: sqlite3.Connection, limit: int = 100, owner_id: Any = ALL_OWNERS) -> list[sqlite3.Row]:
+    """Newest first. `owner_id` limits the list to one user's sessions; admins pass ALL_OWNERS."""
+    where, params = ("", ()) if owner_id is ALL_OWNERS else ("WHERE s.owner_id = ?", (owner_id,))
     return db.execute(
-        """
-        SELECT s.*,
+        f"""
+        SELECT s.*, u.username AS owner_name,
                (SELECT COUNT(*) FROM vacancies v WHERE v.session_id = s.id) AS vacancy_count,
                (SELECT COUNT(*) FROM resumes r WHERE r.session_id = s.id) AS resume_count,
                (SELECT COUNT(*) FROM resumes r WHERE r.session_id = s.id AND r.status = 'done') AS done_count
-        FROM sessions s ORDER BY s.updated_at DESC, s.id DESC LIMIT ?
+        FROM sessions s LEFT JOIN users u ON u.id = s.owner_id
+        {where}
+        ORDER BY s.updated_at DESC, s.id DESC LIMIT ?
         """,
-        (limit,),
+        (*params, limit),
+    ).fetchall()
+
+
+def sessions_not_updated_since(db: sqlite3.Connection, cutoff_iso: str) -> list[sqlite3.Row]:
+    """Sessions whose last change is older than the cutoff (R1 retention)."""
+    return db.execute(
+        "SELECT id, title, updated_at FROM sessions WHERE updated_at < ? ORDER BY updated_at", (cutoff_iso,)
     ).fetchall()
 
 
@@ -215,8 +265,13 @@ def get_resume(db: sqlite3.Connection, resume_id: int) -> sqlite3.Row | None:
 
 
 def claim_pending(db: sqlite3.Connection, session_id: int, limit: int = 1000) -> list[int]:
-    """Atomically move pending resumes to processing and return their ids."""
-    with db:
+    """Atomically move pending resumes to processing and return their ids.
+
+    BEGIN IMMEDIATE takes the write lock before reading, so two workers claiming at the
+    same time (Q1 worker pool) can never both get the same resume.
+    """
+    db.execute("BEGIN IMMEDIATE")
+    try:
         ids = [
             row["id"]
             for row in db.execute(
@@ -224,8 +279,28 @@ def claim_pending(db: sqlite3.Connection, session_id: int, limit: int = 1000) ->
                 (session_id, PENDING, limit),
             )
         ]
-        db.executemany("UPDATE resumes SET status = ? WHERE id = ?", [(PROCESSING, i) for i in ids])
+        stamp = now()
+        db.executemany("UPDATE resumes SET status = ?, started_at = ? WHERE id = ? AND status = ?",
+                       [(PROCESSING, stamp, i, PENDING) for i in ids])
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
     return ids
+
+
+def average_analysis_seconds(db: sqlite3.Connection, sample: int = 20) -> float | None:
+    """Mean analysis time of the last `sample` finished resumes in any session (Q1)."""
+    row = db.execute(
+        """
+        SELECT AVG(seconds) AS avg FROM (
+            SELECT (julianday(analyzed_at) - julianday(started_at)) * 86400.0 AS seconds
+            FROM resumes WHERE status = ? AND started_at IS NOT NULL AND analyzed_at IS NOT NULL
+            ORDER BY analyzed_at DESC LIMIT ?)
+        """,
+        (DONE, sample),
+    ).fetchone()
+    return row["avg"] if row and row["avg"] is not None else None
 
 
 def requeue_failed(db: sqlite3.Connection, session_id: int) -> int:
@@ -323,3 +398,54 @@ def progress(db: sqlite3.Connection, session_id: int) -> dict[str, int]:
         counts[row["status"]] = row["n"]
     counts["total"] = sum(counts.values())
     return counts
+
+
+# Users and audit log (A1) -------------------------------------------------------------------
+
+def create_user(db: sqlite3.Connection, username: str, password_hash: str, role: str) -> int:
+    with db:
+        return int(db.execute(
+            "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+            (username, password_hash, role, now()),
+        ).lastrowid)
+
+
+def get_user(db: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
+    return db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+
+
+def get_user_by_name(db: sqlite3.Connection, username: str) -> sqlite3.Row | None:
+    return db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+
+
+def list_users(db: sqlite3.Connection) -> list[sqlite3.Row]:
+    return db.execute(
+        """
+        SELECT u.*, (SELECT COUNT(*) FROM sessions s WHERE s.owner_id = u.id) AS session_count
+        FROM users u ORDER BY u.username COLLATE NOCASE
+        """
+    ).fetchall()
+
+
+def update_user(db: sqlite3.Connection, user_id: int, **fields: Any) -> None:
+    allowed = {"password_hash", "role", "active", "last_login_at"}
+    items = [(k, v) for k, v in fields.items() if k in allowed]
+    if not items:
+        return
+    with db:
+        db.execute(f"UPDATE users SET {', '.join(f'{k} = ?' for k, _ in items)} WHERE id = ?",
+                   (*[v for _, v in items], user_id))
+
+
+def audit(db: sqlite3.Connection, action: str, user: sqlite3.Row | None = None, session_id: int | None = None,
+          detail: str | None = None, username: str | None = None) -> None:
+    with db:
+        db.execute(
+            "INSERT INTO audit_log (created_at, user_id, username, action, session_id, detail) VALUES (?, ?, ?, ?, ?, ?)",
+            (now(), user["id"] if user else None, user["username"] if user else username, action, session_id,
+             (detail or "")[:500] or None),
+        )
+
+
+def list_audit(db: sqlite3.Connection, limit: int = 200) -> list[sqlite3.Row]:
+    return db.execute("SELECT * FROM audit_log ORDER BY created_at DESC, id DESC LIMIT ?", (limit,)).fetchall()

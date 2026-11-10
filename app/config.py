@@ -30,6 +30,12 @@ def settings_from_env() -> dict[str, Any]:
         "GEMINI_FALLBACK_MODEL": os.environ.get("GEMINI_FALLBACK_MODEL", ""),
         "GEMINI_CONCURRENCY": max(1, _int_env("GEMINI_CONCURRENCY", 2)),
         "GEMINI_MAX_RETRIES": max(0, _int_env("GEMINI_MAX_RETRIES", 5)),
+        # R1: sessions untouched for this many days are deleted (0 = keep forever)
+        "RETENTION_DAYS": max(0, _int_env("RETENTION_DAYS", 90)),
+        # S1: sign-up code for /register (empty = only admins create users)
+        "INVITE_CODE": os.environ.get("INVITE_CODE", "").strip(),
+        # S1: hours added to UTC when statistics group events by day (Kazakhstan: +5)
+        "STATS_UTC_OFFSET": _int_env("STATS_UTC_OFFSET", 5),
         # Uploads
         "MAX_FILES_PER_BATCH": 50,
         "MAX_FILE_BYTES": 5 * 1024 * 1024,

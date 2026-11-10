@@ -9,3 +9,4 @@ pytest>=9.1,<10
 waitress>=3.0,<4
 openpyxl>=3.1,<4
 fpdf2>=2.8,<3
+argon2-cffi>=23.1,<26

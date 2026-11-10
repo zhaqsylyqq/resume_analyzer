@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}{{ t('admin.audit') }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <p class="breadcrumb"><a href="{{ url_for('auth.users') }}">{{ t('admin.users') }}</a> / {{ t('admin.audit') }}</p>
+    <h1>{{ t('admin.audit') }}</h1>
+    <p class="muted">{{ t('admin.audit.lead') }}</p>
+  </div>
+</div>
+{% if entries %}
+<div class="table-wrap">
+  <table class="table">
+    <thead>
+      <tr>
+        <th scope="col">{{ t('admin.audit.time') }}</th>
+        <th scope="col">{{ t('auth.username') }}</th>
+        <th scope="col">{{ t('admin.audit.action') }}</th>
+        <th scope="col" class="num">{{ t('admin.audit.session') }}</th>
+        <th scope="col">{{ t('admin.audit.detail') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in entries %}
+      <tr>
+        <td class="small"><time datetime="{{ e.created_at }}" data-local-time>{{ e.created_at[:16] | replace('T', ' ') }}</time></td>
+        <td>{{ e.username or '—' }}</td>
+        <td><span class="badge badge--{{ 'danger' if e.action in ('login_failed', 'session_delete') else 'plain' }}">{{ t('audit.' ~ e.action) }}</span></td>
+        <td class="num">{{ e.session_id or '' }}</td>
+        <td class="small muted">{{ e.detail or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  <div class="card empty-state"><p>{{ t('admin.audit.empty') }}</p></div>
+{% endif %}
+{% endblock %}

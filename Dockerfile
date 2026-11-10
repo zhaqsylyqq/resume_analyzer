@@ -14,7 +14,7 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY app ./app
-COPY scripts/smoke_test.py ./scripts/smoke_test.py
+COPY scripts/smoke_test.py scripts/backup_db.py ./scripts/
 
 # SQLite database and generated secret live here; mount a volume to keep them.
 RUN mkdir -p /app/instance && chown -R app:app /app/instance

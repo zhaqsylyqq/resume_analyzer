@@ -5,7 +5,7 @@ import json
 import re
 from urllib.parse import quote
 
-from flask import Blueprint, Response, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, Response, abort, current_app, flash, g, jsonify, redirect, render_template, request, url_for
 
 from ..i18n import get_locale, translate
 from ..services import bias, diversity, export as exporter, jobs, scoring, storage
@@ -55,6 +55,7 @@ def create(session_id: int):
 def show(session_id: int, vacancy_id: int):
     session, vacancy = _load(session_id, vacancy_id)
     db = storage.get_db()
+    storage.audit(db, "ranking_open", g.user, session_id, f"vacancy={vacancy_id}")
     top = scoring.parse_top(request.args.get("top", str(scoring.TOP_CHOICES[1])))
     candidates = scoring.ranking(db, vacancy_id)
     shortlist = scoring.top_n(candidates, top)
@@ -116,8 +117,10 @@ def _filename(*parts: str) -> str:
     return "_".join(re.sub(r"[^\w\-]+", "-", p, flags=re.UNICODE).strip("-")[:60] for p in parts if p)
 
 
-def _download(data: bytes, stem: str, ext: str) -> Response:
-    """File response with a UTF-8 filename (RFC 5987) and an ASCII fallback."""
+def _download(data: bytes, stem: str, ext: str, session_id: int, vacancy_id: int | None = None) -> Response:
+    """File response with a UTF-8 filename (RFC 5987) and an ASCII fallback; audited (A1)."""
+    scope = f"vacancy={vacancy_id}" if vacancy_id else "all vacancies"
+    storage.audit(storage.get_db(), "export", g.user, session_id, f"{ext} {scope} top={request.args.get('top') or '-'}")
     name = f"{stem}.{ext}"
     ascii_stem = re.sub(r"[-_]{2,}", "_", stem.encode("ascii", "ignore").decode()).strip("_-")
     ascii_name = f"{ascii_stem or 'ranking'}.{ext}"
@@ -138,21 +141,21 @@ def _shortlist(session_id: int, vacancy_id: int):
 @bp.get("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/export.csv")
 def export(session_id: int, vacancy_id: int):
     *_, shortlist, stem = _shortlist(session_id, vacancy_id)
-    return _download(scoring.to_csv(shortlist, translate), stem, "csv")
+    return _download(scoring.to_csv(shortlist, translate), stem, "csv", session_id, vacancy_id)
 
 
 @bp.get("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/export.xlsx")
 def export_xlsx(session_id: int, vacancy_id: int):
     session, vacancy, _top, ranked, shortlist, stem = _shortlist(session_id, vacancy_id)
     sheet = exporter.VacancySheet(vacancy["title"], shortlist, len(ranked))
-    return _download(exporter.to_xlsx(session["title"], [sheet], translate), stem, "xlsx")
+    return _download(exporter.to_xlsx(session["title"], [sheet], translate), stem, "xlsx", session_id, vacancy_id)
 
 
 @bp.get("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/export.pdf")
 def export_pdf(session_id: int, vacancy_id: int):
     session, vacancy, top, ranked, shortlist, stem = _shortlist(session_id, vacancy_id)
     data = exporter.to_pdf(session["title"], vacancy["title"], shortlist, len(ranked), top, translate)
-    return _download(data, stem, "pdf")
+    return _download(data, stem, "pdf", session_id, vacancy_id)
 
 
 @bp.get("/sessions/<int:session_id>/export.xlsx")
@@ -166,4 +169,4 @@ def export_session_xlsx(session_id: int):
         ranked = scoring.ranking(db, vacancy["id"])
         sheets.append(exporter.VacancySheet(vacancy["title"], scoring.top_n(ranked, top), len(ranked)))
     stem = _filename(session["title"], f"top{top}" if top else "all")
-    return _download(exporter.to_xlsx(session["title"], sheets, translate), stem, "xlsx")
+    return _download(exporter.to_xlsx(session["title"], sheets, translate), stem, "xlsx", session_id)

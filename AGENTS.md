@@ -11,10 +11,14 @@ has the user-facing setup guide.
 
 ## Current state
 
-- Phases 0–7 are done: batch upload, parsing, Gemini extraction + scoring, sessions with
+- Phases 0–15 are done: batch upload, parsing, AI extraction + scoring, sessions with
   append, ranking with Top-N, CSV/Excel/PDF export, bias check, diversity metrics,
-  RU/KK UI, Dockerfile, CI.
-- 208 tests pass. The AI provider is always mocked in tests.
+  per-batch token usage log, login with roles and audit log, data retention and backups,
+  fair round-robin queue with ETA, RU/KK UI, Dockerfile (verified), CI.
+- Tasks 1–6 below are all done (see `PROGRESS.md`), plus S1 usage statistics and invite-code
+  sign-up.
+- 294 tests pass. The AI provider is always mocked in tests; tests sign in as a test
+  recruiter (`tests/conftest.py`: `client`, `anon_client`, `make_user`, `login`).
 - `LLM_PROVIDER` selects the AI provider. The owner uses **DeepSeek** (`deepseek-flash`, a
   prepaid balance of about $5). Gemini still works as a provider. Both go through
   `GeminiService` in `app/services/gemini.py`, which delegates the HTTP request to a
@@ -31,9 +35,6 @@ has the user-facing setup guide.
     from cache;
   - sensible rankings.
 - A move to a self-hosted LLM was considered and deferred; do not start it.
-- The latest commit `f5c7074` ("need to check", by a teammate) added Excel/PDF export,
-  language diversity and lower API usage. Its tests pass, but nobody has checked it by
-  hand yet (task 2).
 
 ## Setup and commands
 
@@ -88,6 +89,10 @@ app/
   config.py            settings from environment variables
   i18n.py              RU/KK translations (TRANSLATIONS dict)
   security.py          CSRF, security headers, CSP
+  auth.py              A1/S1: login/logout, invite sign-up, roles, owner scoping, rate limit, admin
+                       users/audit/stats pages,
+                       `create-admin` CLI
+  retention.py         R1: purge sessions older than RETENTION_DAYS, `purge-old` CLI
   routes/              core.py (/ , /lang, /healthz), sessions.py, screening.py (upload, retry),
                        vacancies.py (ranking, exports, bias check)
   services/
@@ -97,16 +102,17 @@ app/
     openai_compat.py   OpenAICompatBackend + deepseek_backend() (JSON mode, thinking off)
     schemas.py         pydantic schemas = Gemini response schemas
     anonymize.py       demographics-free view for scoring
-    jobs.py            background analysis worker per session
+    jobs.py            shared worker pool, round-robin between sessions, ETA (Q1)
     storage.py         SQLite schema and queries
     scoring.py         ranking, Top-N with ties, CSV
     export.py          Excel and PDF export (DejaVu font in app/fonts/)
     bias.py            lexicon + optional Gemini bias check
     diversity.py       aggregate shortlist metrics
+    stats.py           S1 usage statistics and its Excel report
   prompts/             *.txt prompt templates (string.Template, $placeholders)
   templates/ static/   Jinja2 templates, CSS, vanilla JS
 docs/specs/            one spec per feature
-scripts/               smoke_test.py, make_samples.py
+scripts/               smoke_test.py, make_samples.py, backup_db.py
 tests/                 pytest suite; tests/fakes.py holds the fake Gemini client
 legacy/                original Enbek prototype, read-only; never import from it
 ```

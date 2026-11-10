@@ -8,8 +8,9 @@ it with colleagues who do not use the tool.
 - Session page: **Excel: all vacancies** — one workbook, summary sheet + one sheet per
   vacancy with its Top-10.
 - Excel: header row in the UI language, frozen columns, auto-filter, score cell coloured by
-  verdict band, numeric score/rank/experience. Text cells starting with `= + - @ \t \r` are
-  prefixed with `'` (same rule as CSV).
+  verdict band, numeric score/rank/experience. Every text cell is written with an explicit
+  string type, so `=HYPERLINK(...)` or `- опыт` is shown exactly as written and never
+  evaluated (no visible `'`, unlike CSV). Control characters forbidden by xlsx are removed.
 - PDF: A4, overview table + one block per candidate (summary, matched/missing skills,
   strengths, concerns, contacts) and the fairness note. DejaVu Sans is bundled in
   `app/fonts/` (licence in `LICENSE-DejaVu.txt`) because PDF core fonts have no Cyrillic.
@@ -23,6 +24,6 @@ it with colleagues who do not use the tool.
 | `GET /sessions/<sid>/export.xlsx?top=N` or `top=all` | Excel for every vacancy (default Top-10) |
 
 ## Tests
-`tests/test_export.py`: workbook structure, formula neutralization, sheet-name rules, PDF
+`tests/test_export.py`: workbook structure, no formula cells, control characters, sheet-name rules, PDF
 Cyrillic/Kazakh text, long and empty lists, routes, 404 on foreign ids, buttons on the page,
 zero AI calls, resume-language diversity.

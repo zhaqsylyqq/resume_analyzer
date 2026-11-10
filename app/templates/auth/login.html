@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ t('auth.title') }}{% endblock %}
+{% block content %}
+<div class="auth">
+  <section class="card auth__card">
+    <h1>{{ t('auth.title') }}</h1>
+    <p class="muted">{{ t('auth.lead') }}</p>
+    {% if error %}
+      <div class="alert alert--danger mb-4" role="alert"><p>{{ t(error) }}</p></div>
+    {% endif %}
+    <form method="post" action="{{ url_for('auth.login') }}" class="stack" novalidate>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+      <div class="field">
+        <label class="label" for="username">{{ t('auth.username') }}</label>
+        <input class="input" id="username" name="username" required autocomplete="username" autocapitalize="none"
+               spellcheck="false" maxlength="64" value="{{ username }}" {% if not username %}autofocus{% endif %}>
+      </div>
+      <div class="field">
+        <label class="label" for="password">{{ t('auth.password') }}</label>
+        <input class="input" id="password" name="password" type="password" required autocomplete="current-password"
+               {% if username %}autofocus{% endif %}>
+      </div>
+      <button type="submit" class="btn btn--primary btn--block">{{ t('auth.submit') }}</button>
+    </form>
+    {% if registration_open() %}
+      <p class="hint mt-4 mb-0">{{ t('register.prompt') }} <a href="{{ url_for('auth.register') }}">{{ t('register.link') }}</a></p>
+    {% else %}
+      <p class="hint mt-4 mb-0">{{ t('auth.hint') }}</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

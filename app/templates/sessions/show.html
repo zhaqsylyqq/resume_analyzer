@@ -72,6 +72,7 @@
       </div>
       <div class="row small muted mb-4" data-analysis-state {% if not running %}hidden{% endif %}>
         <span class="spinner" aria-hidden="true"></span><span>{{ t('show.analyzing') }}</span>
+        <span data-eta>{% if eta %}· {{ eta.label }}{% endif %}</span>
       </div>
 
       <p class="muted" data-resumes-empty {% if resumes %}hidden{% endif %}>{{ t('show.resumes.empty') }}</p>

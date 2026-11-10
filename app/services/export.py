@@ -1,7 +1,10 @@
 """US7 — Excel and PDF export of the ranked shortlist (CSV lives in scoring.py).
 
 Both formats are built locally, without any AI call. Like the CSV export they never
-include demographics, and text cells are protected against spreadsheet formula injection.
+include demographics. Excel text cells are written with an explicit string type, so text
+such as "=HYPERLINK(...)" is shown as typed and never evaluated as a formula (no visible
+apostrophe, unlike CSV, where the type cannot be declared). Control characters that the
+xlsx format forbids are removed instead of crashing the export.
 
 - Excel: one sheet per vacancy (a single vacancy or the whole session) plus a summary
   sheet. Cyrillic works out of the box (xlsx is UTF-8).
@@ -20,10 +23,11 @@ from typing import Callable
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .scoring import RankedCandidate, _safe_cell
+from .scoring import RankedCandidate
 
 FONTS_DIR = Path(__file__).resolve().parent.parent / "fonts"
 BRAND = "14213D"
@@ -52,6 +56,18 @@ def _sheet_title(title: str, used: set[str]) -> str:
     return name
 
 
+def _text(value: object) -> str:
+    """Plain text for an xlsx cell: forbidden control characters removed."""
+    return ILLEGAL_CHARACTERS_RE.sub("", "" if value is None else str(value))
+
+
+def _set_text_types(row) -> None:
+    """Force string type: openpyxl would otherwise store "=..." as a formula."""
+    for cell in row:
+        if isinstance(cell.value, str):
+            cell.data_type = "s"
+
+
 def _score_fill(score: int) -> PatternFill:
     color = next(c for limit, c in SCORE_FILLS if score >= limit)
     return PatternFill("solid", fgColor=color)
@@ -71,8 +87,8 @@ def _row(c: RankedCandidate, t: Translate) -> list[object]:
         "strengths": "; ".join(c.strengths), "concerns": "; ".join(c.concerns), "headline": c.headline or "",
         "experience": c.experience_years, "email": c.email or "", "phone": c.phone or "", "file": c.filename,
     }
-    # Numbers stay numbers (sortable in Excel); every text cell is neutralized.
-    return [v if isinstance(v, (int, float)) or v is None else _safe_cell(v) for v in (values[k] for k, _ in COLUMNS)]
+    # Numbers stay numbers (sortable in Excel); everything else becomes plain text.
+    return [v if isinstance(v, (int, float)) or v is None else _text(v) for v in (values[k] for k, _ in COLUMNS)]
 
 
 def to_xlsx(session_title: str, sheets: list[VacancySheet], t: Translate) -> bytes:
@@ -84,7 +100,7 @@ def to_xlsx(session_title: str, sheets: list[VacancySheet], t: Translate) -> byt
     head_font = Font(bold=True, color="FFFFFF")
     head_fill = PatternFill("solid", fgColor=BRAND)
 
-    summary["A1"] = _safe_cell(session_title)
+    summary["A1"] = _text(session_title)
     summary["A1"].font = Font(bold=True, size=14)
     summary["A2"] = t("xlsx.generated", date=datetime.now().strftime("%d.%m.%Y %H:%M"))
     summary.append([])
@@ -97,11 +113,11 @@ def to_xlsx(session_title: str, sheets: list[VacancySheet], t: Translate) -> byt
         cands = sheet.candidates
         scores = [c.score for c in cands]
         summary.append([
-            _safe_cell(sheet.title), len(cands), sheet.total, max(scores, default=0),
+            _text(sheet.title), len(cands), sheet.total, max(scores, default=0),
             round(sum(scores) / len(scores)) if scores else 0, sum(c.verdict in ("strong", "good") for c in cands),
         ])
 
-        ws = wb.create_sheet(_sheet_title(sheet.title, used))
+        ws = wb.create_sheet(_sheet_title(_text(sheet.title), used))
         ws.append([t(f"csv.{key}") for key, _ in COLUMNS])
         for cell in ws[1]:
             cell.font, cell.fill = head_font, head_fill
@@ -113,6 +129,7 @@ def to_xlsx(session_title: str, sheets: list[VacancySheet], t: Translate) -> byt
         for i, (_, width) in enumerate(COLUMNS, start=1):
             ws.column_dimensions[get_column_letter(i)].width = width
         for row in ws.iter_rows(min_row=2):
+            _set_text_types(row)
             for cell in row:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
         ws.freeze_panes = "C2"
@@ -120,6 +137,8 @@ def to_xlsx(session_title: str, sheets: list[VacancySheet], t: Translate) -> byt
 
     summary.append([])
     summary.append([t("xlsx.note")])
+    for row in summary.iter_rows():
+        _set_text_types(row)
     for col, width in zip("ABCDEF", (40, 14, 12, 12, 12, 16)):
         summary.column_dimensions[col].width = width
 
