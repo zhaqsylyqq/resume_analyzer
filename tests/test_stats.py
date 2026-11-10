@@ -16,9 +16,9 @@ def csrf_of(client, path):
     return re.search(r'name="csrf-token" content="([^"]+)"', client.get(path).get_data(as_text=True)).group(1)
 
 
-def register(client, code, username="newbie", password="newbie-pass-1", password2=None):
+def register(client, code, username="newbie", password="newbie-pass-1", password2=None, email="newbie@example.kz"):
     return client.post("/register", data={"csrf_token": csrf_of(client, "/register"), "code": code,
-                                          "username": username, "password": password,
+                                          "username": username, "email": email, "password": password,
                                           "password2": password if password2 is None else password2})
 
 
@@ -69,7 +69,8 @@ def test_guessing_the_code_is_rate_limited(app, anon_client, invite):
 
 def test_register_cannot_create_an_admin(app, anon_client, invite):
     anon_client.post("/register", data={"csrf_token": csrf_of(anon_client, "/register"), "code": "ITPM2026",
-                                        "username": "sneaky", "password": "sneaky-pass-1", "password2": "sneaky-pass-1",
+                                        "username": "sneaky", "email": "s@example.kz", "password": "sneaky-pass-1",
+                                        "password2": "sneaky-pass-1",
                                         "role": "admin"})
     with app.app_context():
         assert storage.get_user_by_name(storage.get_db(), "sneaky")["role"] == "recruiter"

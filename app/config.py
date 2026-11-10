@@ -34,6 +34,8 @@ def settings_from_env() -> dict[str, Any]:
         "RETENTION_DAYS": max(0, _int_env("RETENTION_DAYS", 90)),
         # S1: sign-up code for /register (empty = only admins create users)
         "INVITE_CODE": os.environ.get("INVITE_CODE", "").strip(),
+        # S2: default daily resume limit per recruiter until an admin saves another (0 = none)
+        "DAILY_RESUME_LIMIT": max(0, _int_env("DAILY_RESUME_LIMIT", 30)),
         # S1: hours added to UTC when statistics group events by day (Kazakhstan: +5)
         "STATS_UTC_OFFSET": _int_env("STATS_UTC_OFFSET", 5),
         # Uploads

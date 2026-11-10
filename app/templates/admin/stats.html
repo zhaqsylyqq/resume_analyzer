@@ -80,7 +80,7 @@
       <tbody>
         {% for u in data.users %}
         <tr>
-          <td><strong>{{ u.username }}</strong> <span class="muted small">{{ t('role.' ~ u.role) }}</span></td>
+          <td><strong>{{ u.username }}</strong> <span class="muted small">{{ t('role.' ~ u.role) }}</span>{% if u.email %}<div class="small muted">{{ u.email }}</div>{% endif %}</td>
           <td class="small">{{ when(u.created_at) }}</td>
           <td class="small">{{ when(u.first_login) }}</td>
           <td class="small">{{ when(u.last_login) }}</td>

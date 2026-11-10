@@ -22,6 +22,7 @@ kept read-only in [`legacy/`](legacy/).
 | B2 | Diversity — shortlist vs pool by gender, age band and resume language, four-fifths rule, small-cell suppression |
 | A1 | Login and roles — recruiters see only their own sessions, admins see all and manage users; audit log |
 | S1 | Usage statistics for admins (users, sign-ins, sessions, resumes, exports by day; Excel report) and sign-up with an invite code |
+| S2 | Admin switches for sign-up (open / with invite code / closed), email on sign-up, daily resume limit per recruiter |
 | Q1 | Fair queue — sessions take turns resume by resume; the session page shows the time remaining |
 | R1 | Data retention (sessions untouched for `RETENTION_DAYS` are deleted) and consistent database backups |
 
@@ -103,8 +104,11 @@ flask --app app create-admin                       # macOS / Linux
 ```
 
 More users (recruiters or admins) are added in the app under **Пользователи** (admins only).
-To let classmates or pilot users sign themselves up, set `INVITE_CODE=<some code>` in `.env`
-and share the code: the login page then links to **Регистрация**.
+To let classmates or pilot users sign themselves up, open **Пользователи → Регистрация** and
+tick **Разрешить самостоятельную регистрацию**. With **Требовать код приглашения** ticked
+people also need the code you share; unticked, a username, email and password are enough.
+The same block sets the **daily resume limit per recruiter** (default 30, `0` = none), which
+protects the prepaid AI balance. Changes apply at once, no restart.
 
 ### 6. Start the app
 
@@ -156,7 +160,8 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 | `GEMINI_MAX_RETRIES` | `5` | Retries on 429/5xx before a resume is marked failed, for either provider |
 | `FLASK_SECRET_KEY` | generated | Session secret; generated into `instance/.secret_key` if unset |
 | `SESSION_COOKIE_SECURE` | `0` | Set to `1` when served over HTTPS |
-| `INVITE_CODE` | empty | Code for self sign-up at `/register` (new users become recruiters); empty turns sign-up off |
+| `INVITE_CODE` | empty | Initial invite code; until an admin saves the registration settings, a non-empty code opens sign-up with this code |
+| `DAILY_RESUME_LIMIT` | `30` | Initial limit of resumes per recruiter per 24 hours (0 = none); admins change it in the app |
 | `STATS_UTC_OFFSET` | `5` | Hours added to UTC when statistics group events by day (Kazakhstan: 5) |
 | `RETENTION_DAYS` | `90` | Sessions not changed for this many days are deleted with all their data; `0` keeps everything |
 

@@ -107,7 +107,7 @@ def per_user(db: sqlite3.Connection, period: Period) -> list[dict[str, Any]]:
     wa, pa = period.where("r.analyzed_at")
     rows = db.execute(
         f"""
-        SELECT u.id, u.username, u.role, u.active, u.created_at,
+        SELECT u.id, u.username, u.email, u.role, u.active, u.created_at,
                (SELECT MIN(a.created_at) FROM audit_log a WHERE a.user_id = u.id AND a.action = 'login'{w}) AS first_login,
                (SELECT MAX(a.created_at) FROM audit_log a WHERE a.user_id = u.id AND a.action = 'login'{w}) AS last_login,
                (SELECT COUNT(*) FROM audit_log a WHERE a.user_id = u.id AND a.action = 'login'{w}) AS logins,
@@ -181,12 +181,12 @@ def to_xlsx(db: sqlite3.Connection, period: Period, t: Callable[..., str]) -> by
           [12, 16, 12, 14, 12, 14])
 
     sheet(wb.create_sheet(_text(t("stats.sheet.users"))[:31]),
-          [t("auth.username"), t("admin.role"), t("stats.col.registered"), t("stats.col.first_login"),
+          [t("auth.username"), t("auth.email"), t("admin.role"), t("stats.col.registered"), t("stats.col.first_login"),
            t("stats.col.last_login"), t("stats.logins"), t("stats.sessions"), t("stats.resumes"), t("stats.exports")],
-          [[u["username"], t(f"role.{u['role']}"), _local(u["created_at"], period.utc_offset),
+          [[u["username"], u["email"] or "", t(f"role.{u['role']}"), _local(u["created_at"], period.utc_offset),
             _local(u["first_login"], period.utc_offset), _local(u["last_login"], period.utc_offset),
             u["logins"], u["sessions"], u["resumes"], u["exports"]] for u in data["users"]],
-          [20, 16, 18, 18, 18, 10, 10, 10, 10])
+          [20, 28, 16, 18, 18, 18, 10, 10, 10, 10])
 
     sheet(wb.create_sheet(_text(t("stats.sheet.audit"))[:31]),
           [t("admin.audit.time"), t("auth.username"), t("admin.audit.action"), t("admin.audit.session"),

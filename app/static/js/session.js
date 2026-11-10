@@ -98,6 +98,8 @@
         return;
       }
       addRejected(data.rejected || []);
+      var remainingNode = root.querySelector("[data-remaining]");
+      if (remainingNode && data.remaining_label) { remainingNode.textContent = data.remaining_label; remainingNode.hidden = false; }
       App.toast(format(ds.msgUploaded, { accepted: (data.accepted || []).length, rejected: (data.rejected || []).length + local.length }));
       if ((data.accepted || []).length && !data.started) App.toast(ds.msgNotStarted, "danger");
       if (data.started) wasBusy = true;

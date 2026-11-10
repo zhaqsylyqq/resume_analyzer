@@ -22,6 +22,9 @@ def app(tmp_path):
             "GEMINI_API_KEY": "test-key",
             "GEMINI_MODEL": "test-model",
             "GEMINI_FALLBACK_MODEL": "",
+            # Same for settings a developer may have in .env (S1/S2): tests start from defaults.
+            "INVITE_CODE": "",
+            "DAILY_RESUME_LIMIT": 30,
         }
     )
     yield app

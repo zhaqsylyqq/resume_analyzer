@@ -458,3 +458,7 @@ details.more > div { margin-top: 10px; display: grid; gap: 10px; }
 .usage-chart__axis { stroke: var(--border); stroke-width: 1; }
 .usage-chart__users { fill: var(--accent); }
 .usage-chart__sessions { fill: var(--border-strong); }
+
+/* S2 — checkboxes in the registration settings */
+.check { display: flex; align-items: flex-start; gap: 10px; font-size: 0.925rem; cursor: pointer; }
+.check input { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--accent); flex: none; }

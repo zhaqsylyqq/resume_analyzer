@@ -43,6 +43,7 @@
         <svg class="icon dropzone__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M20 16v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3"/></svg>
         <span class="dropzone__title">{{ t('upload.drop') }}</span>
         <span class="muted small">{{ t('upload.formats', limit=config.MAX_FILES_PER_BATCH, size=(config.MAX_FILE_BYTES // 1048576)) }}</span>
+        <span class="muted small" data-remaining {% if not remaining_label %}hidden{% endif %}>{{ remaining_label or '' }}</span>
         <input type="file" name="files" multiple accept=".pdf,.docx,.txt" data-file-input aria-label="{{ t('upload.drop') }}">
       </label>
       <div class="upload-status mt-4" data-upload-progress hidden>

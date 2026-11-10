@@ -19,6 +19,7 @@
 | 13 | Q1 fair round-robin queue + ETA (AGENTS task 5) | done |
 | 14 | Docker check (AGENTS task 6) | done |
 | 15 | S1 usage statistics + sign-up with invite code | done |
+| 16 | S2 registration switches, email, daily resume limit | done |
 
 ## Done
 - Phase 0: app factory, env-based config, CSRF + security headers, RU/KK i18n, design system
@@ -157,8 +158,16 @@
   (constant-time code check, rate-limited per IP, audited as `register`). 16 new tests,
   294 in total. Checked in the browser.
 
+- Phase 16 (S2, [spec](docs/specs/S2-registration-settings-and-limits.md)): a `settings`
+  table holds admin switches edited on the users page (registration open, require invite
+  code, the code, daily resume limit; audited, no restart). Sign-up asks for an email
+  (`users.email`, migration; also optional for admin-created users, shown in users, stats
+  and its Excel). At most 5 sign-ups per IP per hour. Recruiters may add at most N resumes
+  per 24 hours (default 30, 0 = none, admins exempt); extra files are rejected with a
+  clear message and the upload card shows what is left. 21 new tests, 315 in total.
+
 ## Next (backlog)
-- Deploy the current code to the team server so real users can sign up (set `INVITE_CODE`).
+- Deploy the current code to the team server so real users can sign up (admin opens registration on the users page).
 - Open ideas: proactive RPM limiter, OCR (out of scope).
 - F5 Market feedback on the vacancy (explicitly out of scope for now).
 - Optional: proactive client-side RPM limiter to avoid free-tier 429s entirely; OCR for

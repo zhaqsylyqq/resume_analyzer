@@ -5,24 +5,35 @@
 <div class="auth">
   <section class="card auth__card">
     <h1>{{ t('register.title') }}</h1>
-    <p class="muted">{{ t('register.lead') }}</p>
+    <p class="muted">{{ t('register.lead') if require_code else t('register.lead_open') }}</p>
     {% if errors %}
       <div class="alert alert--danger mb-4" role="alert"><p>{{ t('form.error.summary') }}</p></div>
     {% endif %}
     <form method="post" action="{{ url_for('auth.register') }}" class="stack" novalidate>
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% if require_code %}
       <div class="field">
         <label class="label" for="code">{{ t('register.code') }}</label>
         <input class="input" id="code" name="code" required autocomplete="off" autocapitalize="none" spellcheck="false"
                maxlength="100" {% if errors.code %}aria-invalid="true" aria-describedby="code-error"{% endif %}>
         {{ field_error('code') }}
       </div>
+      {% elif errors.code %}
+        <div class="alert alert--danger" role="alert"><p>{{ t(errors.code) }}</p></div>
+      {% endif %}
       <div class="field">
         <label class="label" for="username">{{ t('auth.username') }}</label>
         <input class="input" id="username" name="username" required maxlength="64" autocomplete="username"
                autocapitalize="none" spellcheck="false" value="{{ form.username }}"
                {% if errors.username %}aria-invalid="true" aria-describedby="username-error"{% endif %}>
         {% if errors.username %}{{ field_error('username') }}{% else %}<span class="hint">{{ t('auth.error.username') }}</span>{% endif %}
+      </div>
+      <div class="field">
+        <label class="label" for="email">{{ t('auth.email') }}</label>
+        <input class="input" id="email" name="email" type="email" required maxlength="254" autocomplete="email"
+               spellcheck="false" value="{{ form.email }}"
+               {% if errors.email %}aria-invalid="true" aria-describedby="email-error"{% endif %}>
+        {{ field_error('email') }}
       </div>
       <div class="field">
         <label class="label" for="password">{{ t('auth.password') }}</label>

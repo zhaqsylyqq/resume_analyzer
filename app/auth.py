@@ -1,5 +1,7 @@
 """A1 — login, logout, roles, login rate limiting and the create-admin CLI command.
-S1 adds sign-up with an invite code (/register) and the admin statistics page.
+S1 adds sign-up with an invite code (/register) and the admin statistics page; S2 makes
+sign-up switchable by admins (open / with code / closed), asks for an email and limits
+sign-ups per IP.
 
 The signed-in user is loaded on every request into `g.user`. The Flask session stores the
 user id and a fingerprint of the password hash, so changing a password or deactivating a
@@ -26,6 +28,7 @@ from flask import (
     url_for,
 )
 
+from . import settings as app_settings
 from .i18n import translate
 from .security import is_safe_redirect
 from .services import stats as usage_stats
@@ -38,6 +41,11 @@ USERNAME_RE = re.compile(r"^[\w.\-]{3,64}$", re.UNICODE)
 MIN_PASSWORD = 10
 SESSION_LIFETIME = timedelta(hours=12)
 PUBLIC_ENDPOINTS = frozenset({"auth.login", "auth.register", "core.health", "core.set_language", "static"})
+
+EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
+MAX_EMAIL = 254
+MAX_SIGNUPS_PER_IP = 5
+SIGNUP_WINDOW = 3600.0
 
 MAX_FAILURES = 5
 FAILURE_WINDOW = 15 * 60.0
@@ -68,6 +76,12 @@ def _fingerprint(password_hash: str) -> str:
 
 def validate_username(username: str) -> str | None:
     return None if USERNAME_RE.match(username or "") else "auth.error.username"
+
+
+def validate_email(email: str, required: bool) -> str | None:
+    if not email:
+        return "auth.error.email_required" if required else None
+    return None if len(email) <= MAX_EMAIL and EMAIL_RE.match(email) else "auth.error.email"
 
 
 def validate_password(password: str) -> str | None:
@@ -111,6 +125,36 @@ class LoginLimiter:
 
 def _limiter() -> LoginLimiter:
     return current_app.extensions["login_limiter"]
+
+
+class SignupLimiter:
+    """S2: at most MAX_SIGNUPS_PER_IP successful sign-ups per IP per SIGNUP_WINDOW."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self.clock = clock
+        self._events: dict[str, deque[float]] = defaultdict(deque)
+        self._lock = threading.Lock()
+
+    def _prune(self, ip: str, now: float) -> deque[float]:
+        events = self._events[ip]
+        while events and events[0] <= now - SIGNUP_WINDOW:
+            events.popleft()
+        return events
+
+    def blocked(self, ip: str) -> bool:
+        with self._lock:
+            return len(self._prune(ip, self.clock())) >= MAX_SIGNUPS_PER_IP
+
+    def record(self, ip: str) -> None:
+        with self._lock:
+            now = self.clock()
+            self._prune(ip, now).append(now)
+
+
+def current_settings() -> app_settings.AppSettings:
+    if "app_settings" not in g:
+        g.app_settings = app_settings.load(storage.get_db(), current_app.config)
+    return g.app_settings
 
 
 # Request hooks and decorators -------------------------------------------------------------
@@ -170,6 +214,7 @@ def admin_required(view):
 def init_auth(app: Flask) -> None:
     app.config.setdefault("PERMANENT_SESSION_LIFETIME", SESSION_LIFETIME)
     app.extensions["login_limiter"] = LoginLimiter()
+    app.extensions["signup_limiter"] = SignupLimiter()
     # Runs after the CSRF check registered by init_security.
     app.before_request(_load_user)
     app.before_request(_require_login)
@@ -229,7 +274,7 @@ def _sign_in(db, user) -> None:
 
 
 def registration_open() -> bool:
-    return bool(current_app.config.get("INVITE_CODE"))
+    return current_settings().signup_available
 
 
 @bp.route("/register", methods=["GET", "POST"])
@@ -239,18 +284,28 @@ def register():
         abort(404)
     if g.get("user") is not None:
         return redirect(url_for("core.index"))
-    form = {"username": request.form.get("username", "").strip()}
+    cfg = current_settings()
+    form = {"username": request.form.get("username", "").strip(),
+            "email": request.form.get("email", "").strip().lower()}
+    render = lambda errors: render_template("auth/register.html", form=form, errors=errors,  # noqa: E731
+                                           require_code=cfg.require_code)
     if request.method == "GET":
-        return render_template("auth/register.html", form=form, errors={})
+        return render({})
 
     limiter, ip_key = _limiter(), f"ip:{_client_ip()}"
+    signups = current_app.extensions["signup_limiter"]
     if limiter.blocked(ip_key):
-        return render_template("auth/register.html", form=form, errors={"code": "auth.error.locked"}), 429
+        return render({"code": "auth.error.locked"}), 429
+    if signups.blocked(_client_ip()):
+        return render({"username": "register.error.too_many"}), 429
     errors = {}
-    code = request.form.get("code", "").strip()
-    if not hmac.compare_digest(code.encode(), current_app.config["INVITE_CODE"].encode()):
-        limiter.fail(ip_key)
-        errors["code"] = "auth.error.locked" if limiter.blocked(ip_key) else "register.error.code"
+    if cfg.require_code:
+        code = request.form.get("code", "").strip()
+        if not hmac.compare_digest(code.encode(), cfg.invite_code.encode()):
+            limiter.fail(ip_key)
+            errors["code"] = "auth.error.locked" if limiter.blocked(ip_key) else "register.error.code"
+    if error := validate_email(form["email"], required=True):
+        errors["email"] = error
     password = request.form.get("password", "")
     db = storage.get_db()
     if error := validate_username(form["username"]):
@@ -263,9 +318,10 @@ def register():
         errors["password2"] = "register.error.mismatch"
     if errors:
         status = 429 if errors.get("code") == "auth.error.locked" else 400
-        return render_template("auth/register.html", form=form, errors=errors), status
+        return render(errors), status
 
-    user_id = storage.create_user(db, form["username"], hash_password(password), "recruiter")
+    user_id = storage.create_user(db, form["username"], hash_password(password), "recruiter", form["email"])
+    signups.record(_client_ip())
     user = storage.get_user(db, user_id)
     storage.audit(db, "register", user, detail=_client_ip())
     _sign_in(db, user)
@@ -283,11 +339,20 @@ def logout():
 
 # Admin: users and audit log -----------------------------------------------------------------
 
+def _users_page(form=None, errors=None, settings_errors=None, status=200):
+    db = storage.get_db()
+    settings_form = current_settings()
+    return render_template(
+        "admin/users.html", users=storage.list_users(db), roles=ROLES,
+        form=form or {"username": "", "email": "", "role": "recruiter"}, errors=errors or {},
+        settings=settings_form, settings_errors=settings_errors or {},
+    ), status
+
+
 @bp.get("/admin/users")
 @admin_required
 def users():
-    return render_template("admin/users.html", users=storage.list_users(storage.get_db()), roles=ROLES,
-                           form={"username": "", "role": "recruiter"}, errors={})
+    return _users_page()
 
 
 @bp.post("/admin/users")
@@ -295,6 +360,7 @@ def users():
 def create_user():
     db = storage.get_db()
     username = request.form.get("username", "").strip()
+    email = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "")
     role = request.form.get("role", "recruiter")
     errors = {}
@@ -302,17 +368,51 @@ def create_user():
         errors["username"] = error
     elif storage.get_user_by_name(db, username):
         errors["username"] = "auth.error.username_taken"
+    if error := validate_email(email, required=False):
+        errors["email"] = error
     if error := validate_password(password):
         errors["password"] = error
     if role not in ROLES:
         errors["role"] = "auth.error.role"
     if errors:
-        return render_template("admin/users.html", users=storage.list_users(db), roles=ROLES,
-                               form={"username": username, "role": role}, errors=errors), 400
-    user_id = storage.create_user(db, username, hash_password(password), role)
+        return _users_page({"username": username, "email": email, "role": role}, errors, status=400)
+    user_id = storage.create_user(db, username, hash_password(password), role, email)
     storage.audit(db, "user_create", g.user, detail=f"{username} ({role}) id={user_id}")
     flash("admin.user_created", "success")
     return redirect(url_for("auth.users"))
+
+
+@bp.post("/admin/settings")
+@admin_required
+def update_settings():
+    """S2: registration switches, invite code and daily resume limit."""
+    code = request.form.get("invite_code", "").strip()
+    errors = {}
+    try:
+        limit = int(request.form.get("daily_limit", "").strip())
+        if not 0 <= limit <= app_settings.MAX_LIMIT:
+            raise ValueError
+    except ValueError:
+        errors["daily_limit"] = "settings.error.limit"
+        limit = current_settings().daily_limit
+    new = app_settings.AppSettings(
+        registration_open=request.form.get("registration_open") == "1",
+        require_code=request.form.get("require_code") == "1",
+        invite_code=code[:100],
+        daily_limit=limit,
+    )
+    if new.registration_open and new.require_code and not new.invite_code:
+        errors["invite_code"] = "settings.error.code"
+    if errors:
+        g.app_settings = new
+        return _users_page(settings_errors=errors, status=400)
+    db = storage.get_db()
+    app_settings.save(db, new)
+    g.pop("app_settings", None)
+    mode = "closed" if not new.registration_open else ("code" if new.require_code else "open")
+    storage.audit(db, "settings_update", g.user, detail=f"registration={mode} daily_limit={new.daily_limit}")
+    flash("settings.saved", "success")
+    return redirect(url_for("auth.users") + "#registration")
 
 
 @bp.post("/admin/users/<int:user_id>")

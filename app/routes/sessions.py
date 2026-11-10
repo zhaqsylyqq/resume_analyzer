@@ -116,7 +116,14 @@ def show(session_id: int):
         progress=storage.progress(db, session_id),
         running=jobs.is_running(session_id),
         eta=_eta(db, session_id),
+        remaining_label=_remaining_label(),
     )
+
+
+def _remaining_label():
+    from .screening import remaining_label, remaining_today  # avoid a circular import
+
+    return remaining_label(remaining_today())
 
 
 def _eta(db, session_id: int) -> dict[str, Any] | None:

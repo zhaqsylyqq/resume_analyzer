@@ -75,6 +75,11 @@ CREATE TABLE IF NOT EXISTS users (
     created_at    TEXT NOT NULL,
     last_login_at TEXT
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS audit_log (
     id          INTEGER PRIMARY KEY,
     created_at  TEXT NOT NULL,
@@ -132,6 +137,9 @@ def init_db(app: Flask) -> None:
 def _migrate(db: sqlite3.Connection) -> None:
     """Additive migrations for databases created by earlier versions."""
     columns = {row["name"] for row in db.execute("PRAGMA table_info(sessions)")}
+    user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
+    if "email" not in user_columns:  # S2
+        db.execute("ALTER TABLE users ADD COLUMN email TEXT")
     resume_columns = {row["name"] for row in db.execute("PRAGMA table_info(resumes)")}
     if "started_at" not in resume_columns:  # Q1: time per resume for the ETA
         db.execute("ALTER TABLE resumes ADD COLUMN started_at TEXT")
@@ -402,12 +410,38 @@ def progress(db: sqlite3.Connection, session_id: int) -> dict[str, int]:
 
 # Users and audit log (A1) -------------------------------------------------------------------
 
-def create_user(db: sqlite3.Connection, username: str, password_hash: str, role: str) -> int:
+def create_user(db: sqlite3.Connection, username: str, password_hash: str, role: str,
+                email: str | None = None) -> int:
     with db:
         return int(db.execute(
-            "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
-            (username, password_hash, role, now()),
+            "INSERT INTO users (username, password_hash, role, created_at, email) VALUES (?, ?, ?, ?, ?)",
+            (username, password_hash, role, now(), email or None),
         ).lastrowid)
+
+
+def get_settings(db: sqlite3.Connection) -> dict[str, str]:
+    return {row["key"]: row["value"] for row in db.execute("SELECT key, value FROM settings")}
+
+
+def save_settings(db: sqlite3.Connection, values: dict[str, str]) -> None:
+    stamp = now()
+    with db:
+        db.executemany(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            [(k, v, stamp) for k, v in values.items()],
+        )
+
+
+def resumes_added_since(db: sqlite3.Connection, owner_id: int, since_iso: str) -> int:
+    """S2: resumes accepted for analysis (not parse failures) in the owner's sessions since a time."""
+    return int(db.execute(
+        """
+        SELECT COUNT(*) FROM resumes r JOIN sessions s ON s.id = r.session_id
+        WHERE s.owner_id = ? AND r.created_at >= ? AND r.status != ?
+        """,
+        (owner_id, since_iso, PARSE_FAILED),
+    ).fetchone()[0])
 
 
 def get_user(db: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
