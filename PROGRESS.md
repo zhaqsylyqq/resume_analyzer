@@ -20,6 +20,7 @@
 | 14 | Docker check (AGENTS task 6) | done |
 | 15 | S1 usage statistics + sign-up with invite code | done |
 | 16 | S2 registration switches, email, daily resume limit | done |
+| 17 | Public access: hrscreen.date via Cloudflare Tunnel | live from the owner's laptop; server move pending ([DEPLOY](docs/DEPLOY.md)) |
 
 ## Done
 - Phase 0: app factory, env-based config, CSRF + security headers, RU/KK i18n, design system
@@ -166,8 +167,22 @@
   per 24 hours (default 30, 0 = none, admins exempt); extra files are rejected with a
   clear message and the upload card shows what is left. 21 new tests, 315 in total.
 
+- Phase 17 (public access): the domain `hrscreen.date` was bought at Cloudflare Registrar
+  and the named tunnel `hrscreen` serves it.
+  - `scripts/serve_public.ps1` runs waitress on 127.0.0.1 plus `cloudflared tunnel run`
+    from the owner's laptop.
+  - Verified from the internet on 2026-11-10 (then still behind an interim
+    shared-password gate, since replaced by A1 login): pages redirect to `/login`, JSON
+    returns 401, `/healthz` returns 200, and the session cookie is
+    `Secure; HttpOnly; SameSite=Lax`.
+  - Cloudflare Access with email OTP was tried and dropped, because adding every
+    person by email was too much overhead.
+  - `deploy/docker-compose.yml` (app + cloudflared) and `docs/DEPLOY.md` prepare the move
+    to an always-on server (not run yet).
+
 ## Next (backlog)
-- Deploy the current code to the team server so real users can sign up (admin opens registration on the users page).
+- Move hosting off the laptop to an always-on server with `deploy/docker-compose.yml`
+  (`docs/DEPLOY.md`, AGENTS task 0), then deploy the current code there so real users can sign up (admin opens registration on the users page).
 - Open ideas: proactive RPM limiter, OCR (out of scope).
 - F5 Market feedback on the vacancy (explicitly out of scope for now).
 - Optional: proactive client-side RPM limiter to avoid free-tier 429s entirely; OCR for

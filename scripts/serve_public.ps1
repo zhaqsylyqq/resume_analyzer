@@ -5,8 +5,8 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\serve_public.ps1 -Tunnel hrscreen -Port 8000
 #
 # Starts waitress on 127.0.0.1 (not reachable from the network directly) and then the tunnel.
-# Ctrl+C stops both. Refuses to start without ACCESS_PASSWORD in .env, so the app is never
-# public without the sign-in gate. The password itself is never printed.
+# Ctrl+C stops both. Every page needs a login (app/auth.py); create the first admin once with
+#   .\.venv\Scripts\flask.exe --app app create-admin
 param(
     [string]$Tunnel = "hrscreen",
     [int]$Port = 8000,
@@ -15,18 +15,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$python = Join-Path $root ".venv\Scripts\python.exe"
 $waitress = Join-Path $root ".venv\Scripts\waitress-serve.exe"
 
 if (-not (Test-Path $Cloudflared)) {
     $found = Get-Command cloudflared -ErrorAction SilentlyContinue
     if (-not $found) { throw "cloudflared not found at $Cloudflared" }
     $Cloudflared = $found.Source
-}
-
-& $python -c "import sys; from dotenv import dotenv_values; v = dotenv_values(r'$root\.env'); sys.exit(0 if len(v.get('ACCESS_PASSWORD') or '') >= 10 else 1)"
-if ($LASTEXITCODE -ne 0) {
-    throw "Set ACCESS_PASSWORD (10+ characters) in .env before going public."
 }
 
 $env:SESSION_COOKIE_SECURE = "1"

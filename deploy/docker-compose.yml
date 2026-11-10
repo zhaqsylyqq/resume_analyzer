@@ -1,0 +1,26 @@
+# Always-on deployment: the app plus a Cloudflare Tunnel connector for hrscreen.date.
+# No inbound ports are opened: the connector dials out to Cloudflare.
+# Run from the repository root (see docs/DEPLOY.md):
+#   docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
+# Status: written for the handoff, not yet run end to end.
+services:
+  app:
+    build: ..
+    env_file: ../.env
+    environment:
+      SESSION_COOKIE_SECURE: "1"
+    volumes:
+      - app-data:/app/instance
+    restart: unless-stopped
+
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.7
+    command: tunnel --no-autoupdate run --url http://app:8000
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  app-data:

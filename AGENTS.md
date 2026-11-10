@@ -2,8 +2,9 @@
 
 You are taking over **Enbek Screen**, an HR tool that screens many resumes at once against
 one or more vacancies and returns a ranked Top-N shortlist, with fairness built in. The
-product works end to end today. Your job is to make it ready for real use on a **paid
-DeepSeek key**: the tasks in [Your tasks](#your-tasks), in order.
+product works end to end and is live at **https://hrscreen.date** (personal accounts with roles).
+Your first job is to move it off the owner's laptop onto an always-on server (task 0). Then
+do the other tasks in [Your tasks](#your-tasks), in order.
 
 Read this file, then [`PROGRESS.md`](PROGRESS.md) (status and known issues) and the spec of
 whatever you are about to touch in [`docs/specs/`](docs/specs/). [`README.md`](README.md)
@@ -19,6 +20,10 @@ has the user-facing setup guide.
   registration settings (open / invite code / closed), email and a daily resume limit.
 - 315 tests pass. The AI provider is always mocked in tests; tests sign in as a test
   recruiter (`tests/conftest.py`: `client`, `anon_client`, `make_user`, `login`).
+- **Deployment:** the domain `hrscreen.date` is at Cloudflare (owner's account). A named
+  Cloudflare Tunnel `hrscreen` serves it today from the owner's laptop via
+  `scripts/serve_public.ps1`. Moving it to an always-on server is task 0, described in
+  [`docs/DEPLOY.md`](docs/DEPLOY.md).
 - `LLM_PROVIDER` selects the AI provider. The owner uses **DeepSeek** (`deepseek-flash`, a
   prepaid balance of about $5). Gemini still works as a provider. Both go through
   `GeminiService` in `app/services/gemini.py`, which delegates the HTTP request to a
@@ -135,74 +140,34 @@ For each task:
 
 ## Your tasks
 
-### 1. Finish the DeepSeek setup (small, do first)
+### 0. Move hosting off the laptop (do first)
 
-DeepSeek works live (see [Current state](#current-state)). Two loose ends remain:
+Follow [`docs/DEPLOY.md`](docs/DEPLOY.md):
 
-- Add a commented DeepSeek block to `.env.example`. README's Configuration table lists the
-  variables. Keep Gemini as the commented alternative, and do not touch `.env` itself.
-- Log token usage per batch at INFO level: prompt, cache-hit and completion tokens from
-  `response.usage`, summed per session in `jobs.py`. The owner can then see what a batch
-  cost without opening the DeepSeek dashboard. Never log resume text or keys.
-- If live batches ever show `invalid_output` failures, improve the JSON instruction in
-  `openai_compat.py` (for example, add a compact example object) rather than loosening
-  the schemas.
-- **Done when:** `.env.example` documents both providers, and a finished batch logs one
-  usage line, covered by a test.
+1. Pick a small always-on VPS together with the owner, who pays for it.
+2. Run [`deploy/docker-compose.yml`](deploy/docker-compose.yml): the app plus a
+   `cloudflared` connector for the same tunnel `hrscreen`.
+3. Ask the owner for the secrets listed in DEPLOY.md (`LLM_PROVIDER`, `DEEPSEEK_API_KEY`,
+   `TUNNEL_TOKEN`) through a private channel. Never commit them or paste them into logs.
+4. Create the first admin on the server's database with `flask --app app create-admin`.
+   Then open registration as [`TEAMMATE.md`](TEAMMATE.md) describes.
+5. Coordinate the cutover with the owner: the laptop runner must stop when the server
+   connector is up. Otherwise traffic splits across two databases.
 
-### 2. Review the teammate's export commit (`f5c7074`)
+- **Done when:** the "Done when" list in `docs/DEPLOY.md` holds, with the laptop off.
 
-- Run the app, screen the sample resumes, and download CSV, Excel (per vacancy and whole
-  session) and PDF.
-- Check Cyrillic and Kazakh letters in the PDF; numbers stay numeric in Excel; no
-  demographics in any export; formula injection is neutralised (a resume line starting
-  with `=` must not become a formula).
-- Read the diff (`git show f5c7074`) for violations of the rules above.
-- **Done when:** every problem you found is fixed with a test, or listed in
-  `PROGRESS.md` known issues if it is out of scope.
+### Done earlier
 
-### 3. Login and roles
+Tasks 1–6 of the previous handoff are done (see `PROGRESS.md`, phases 9–16):
 
-The app has no authentication today: anyone who can reach it sees every session. Resumes
-contain personal data, so this blocks real use.
+- token usage logging and the DeepSeek block in `.env.example`;
+- review of the export commit;
+- login, roles and audit log;
+- retention and backups;
+- fair queue and ETA;
+- Docker check.
 
-- Login by username and password; hash passwords with a standard library (for example
-  argon2 or bcrypt via a maintained package; add it to `requirements.txt`).
-- Roles: `recruiter` (own sessions only) and `admin` (all sessions, manage users). Add
-  `owner_id` to `sessions` and scope every query and route by it, including exports and
-  the status endpoint.
-- Create the first admin with a CLI command (for example `flask --app app create-admin`),
-  never with a default password.
-- Add an `audit_log` table: who opened, exported or deleted which session, and when.
-- Keep CSRF on the login form; rate-limit failed logins.
-- **Done when:** every route except `/login`, `/healthz` and static files requires login;
-  tests prove recruiter A cannot read, export or delete recruiter B's session.
-
-### 4. Data retention and backups
-
-- Setting `RETENTION_DAYS` (default 90; the owner can change it): sessions older than that
-  are deleted with all their data. Run it from a CLI command and at app start.
-- `scripts/backup_db.py`: a consistent copy of `instance/app.db` using the `sqlite3` backup
-  API, with a timestamp in the file name. Document how to schedule it.
-- **Done when:** both are tested and documented in README.
-
-### 5. Fair queue and ETA
-
-- Today each session has its own worker thread. Concurrency is capped globally by the
-  shared Gemini semaphore, but a big batch can starve a small one. Make sessions take
-  turns (round-robin by session).
-- Show an estimated time remaining on the session page, based on the recent average time
-  per resume.
-- **Done when:** a test shows two sessions progress in alternation, and the ETA shows in
-  RU and KK.
-
-### 6. Docker check
-
-- Build and run the image as described in README (`docker build`, `docker run` with
-  `--env-file .env` and the `/app/instance` volume). Confirm `/healthz`, a screening of the
-  sample resumes, and that data survives a container restart.
-- **Done when:** README matches what actually works, and `PROGRESS.md` no longer lists
-  this as open.
+Remaining ideas are in the `PROGRESS.md` backlog.
 
 ### Out of scope
 
