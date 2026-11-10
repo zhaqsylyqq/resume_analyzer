@@ -22,6 +22,7 @@
 | 16 | S2 registration switches, email, daily resume limit | done |
 | 17 | Public access: hrscreen.date via Cloudflare Tunnel | live from the owner's laptop; server move pending ([DEPLOY](docs/DEPLOY.md)) |
 | 18 | S3 example session for new users + delete a vacancy | done |
+| 19 | S4 (SIS 10-11): real client IP behind the tunnel, unique email, audit de-dup; CR-01 candidate pipeline | done |
 
 ## Done
 - Phase 0: app factory, env-based config, CSRF + security headers, RU/KK i18n, design system
@@ -186,6 +187,13 @@
   counted as their own session in statistics, `STARTER_SESSION=0` turns it off); vacancies
   can be deleted from the session page (scores cascade, resumes stay; audited). 10 new
   tests, 325 in total.
+
+- Phase 19 (S4 / SIS 10-11, [spec](docs/specs/S4-sis10-fixes-and-candidate-pipeline.md)):
+  testing found that behind Cloudflare Tunnel every visitor was 127.0.0.1 (sign-up closed
+  for everybody after 5 accounts an hour; one bad guesser locked everyone out) — fixed with
+  `TRUSTED_PROXIES` + `CF-Connecting-IP`; one account per email; ranking views logged
+  once per 10 minutes. Client change request CR-01: candidate statuses with notes, status
+  filter, name search, status/note in CSV/Excel/PDF. 29 new tests, 354 in total.
 
 ## Next (backlog)
 - Move hosting off the laptop to an always-on server with `deploy/docker-compose.yml`

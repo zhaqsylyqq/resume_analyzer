@@ -27,6 +27,7 @@ kept read-only in [`legacy/`](legacy/).
 | S1 | Usage statistics for admins (users, sign-ins, sessions, resumes, exports by day; Excel report) and sign-up with an invite code |
 | S2 | Admin switches for sign-up (open / with invite code / closed), email on sign-up, daily resume limit per recruiter |
 | S3 | Example session with a Python vacancy for every new user; any vacancy can be deleted |
+| CR-01 | Candidate pipeline — status per candidate (new, shortlist, interview, offer, rejected) with a note, status filter, name search; status and note in all exports |
 | Q1 | Fair queue — sessions take turns resume by resume; the session page shows the time remaining |
 | R1 | Data retention (sessions untouched for `RETENTION_DAYS` are deleted) and consistent database backups |
 
@@ -168,6 +169,7 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 | `DAILY_RESUME_LIMIT` | `30` | Initial limit of resumes per recruiter per 24 hours (0 = none); admins change it in the app |
 | `STATS_UTC_OFFSET` | `5` | Hours added to UTC when statistics group events by day (Kazakhstan: 5) |
 | `STARTER_SESSION` | `1` | Give every new user an example session with a Python vacancy (`0` = off) |
+| `TRUSTED_PROXIES` | `127.0.0.1,::1` | Peers allowed to pass the visitor IP (`CF-Connecting-IP` / `X-Forwarded-For`); needed for rate limits behind Cloudflare Tunnel |
 | `RETENTION_DAYS` | `90` | Sessions not changed for this many days are deleted with all their data; `0` keeps everything |
 
 `python scripts/smoke_test.py --list-models` lists the models your key can use.

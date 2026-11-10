@@ -74,7 +74,7 @@ def _score_fill(score: int) -> PatternFill:
 
 
 COLUMNS = (
-    ("rank", 7), ("name", 26), ("score", 8), ("verdict", 16), ("summary", 60), ("matched", 34),
+    ("rank", 7), ("name", 26), ("score", 8), ("verdict", 16), ("status", 14), ("note", 30), ("summary", 60), ("matched", 34),
     ("missing", 34), ("strengths", 40), ("concerns", 40), ("headline", 26), ("experience", 10),
     ("email", 26), ("phone", 18), ("file", 24),
 )
@@ -83,6 +83,7 @@ COLUMNS = (
 def _row(c: RankedCandidate, t: Translate) -> list[object]:
     values = {
         "rank": c.rank, "name": c.name or "", "score": c.score, "verdict": t(f"verdict.{c.verdict}"),
+        "status": t(f"status.{c.status}"), "note": c.note,
         "summary": c.summary, "matched": ", ".join(c.matched_skills), "missing": ", ".join(c.missing_skills),
         "strengths": "; ".join(c.strengths), "concerns": "; ".join(c.concerns), "headline": c.headline or "",
         "experience": c.experience_years, "email": c.email or "", "phone": c.phone or "", "file": c.filename,
@@ -227,7 +228,10 @@ def to_pdf(session_title: str, vacancy_title: str, candidates: list[RankedCandid
         pdf.multi_cell(width, 6, _pdf_text(f"{c.rank}. {c.name or c.filename} — {c.score}/100 ({t(f'verdict.{c.verdict}')})"))
         pdf.set_font("DejaVu", "", 8.5)
         pdf.set_text_color(40, 40, 40)
-        lines = [c.summary]
+        lines = []
+        if c.status != "new" or c.note:
+            lines.append(f"{t('csv.status')}: {t(f'status.{c.status}')}" + (f" · {c.note}" if c.note else ""))
+        lines.append(c.summary)
         for key, items in (("rank.matched", c.matched_skills), ("rank.missing", c.missing_skills),
                            ("rank.strengths", c.strengths), ("rank.concerns", c.concerns)):
             if items:

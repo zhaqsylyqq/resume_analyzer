@@ -40,6 +40,10 @@ def settings_from_env() -> dict[str, Any]:
         "STARTER_SESSION": os.environ.get("STARTER_SESSION", "1") != "0",
         # S1: hours added to UTC when statistics group events by day (Kazakhstan: +5)
         "STATS_UTC_OFFSET": _int_env("STATS_UTC_OFFSET", 5),
+        # SIS 10-11 fix: peers allowed to tell the real client IP (CF-Connecting-IP / X-Forwarded-For).
+        # cloudflared runs on the same machine, so the default trusts loopback only;
+        # addresses or networks, e.g. "127.0.0.1,::1,172.16.0.0/12" for docker-compose.
+        "TRUSTED_PROXIES": tuple(p.strip() for p in os.environ.get("TRUSTED_PROXIES", "127.0.0.1,::1").split(",") if p.strip()),
         # Uploads
         "MAX_FILES_PER_BATCH": 50,
         "MAX_FILE_BYTES": 5 * 1024 * 1024,

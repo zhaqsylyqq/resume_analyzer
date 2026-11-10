@@ -465,3 +465,30 @@ details.more > div { margin-top: 10px; display: grid; gap: 10px; }
 
 /* S3 — delete a vacancy from the session page */
 .vacancy-list__delete { display: flex; justify-content: flex-end; margin: -4px 0 8px; }
+
+/* SIS 10-11 CR-01 — candidate pipeline: status filter, search and per-candidate status */
+.pipeline-bar { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; }
+.status-filter { display: flex; flex-wrap: wrap; gap: 6px; }
+.status-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+  font-size: 0.85rem; font-weight: 600; text-decoration: none;
+}
+.status-chip span { font-variant-numeric: tabular-nums; color: var(--text); }
+.status-chip:hover { border-color: var(--border-strong); }
+.status-chip.is-active { background: var(--text); border-color: var(--text); color: var(--surface); }
+.status-chip.is-active span { color: var(--surface); }
+.search-form { display: flex; gap: 6px; align-items: center; flex: 1 1 220px; max-width: 340px; }
+.search-form .input { min-height: 32px; padding: 4px 10px; font-size: 0.875rem; }
+.status-form { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+.status-select { width: auto; min-height: 32px; padding: 4px 8px; font-size: 0.85rem; font-weight: 600; }
+.status-note { flex: 1 1 140px; min-height: 32px; padding: 4px 8px; font-size: 0.85rem; }
+.status-select--shortlist { border-color: var(--info); color: var(--info); background: var(--info-soft); }
+.status-select--interview { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft); }
+.status-select--offer { border-color: var(--success); color: var(--success); background: var(--success-soft); }
+.status-select--rejected { border-color: var(--danger); color: var(--danger); background: var(--danger-soft); }
+.ranking tr.has-status-row td { border-bottom: 0; padding-bottom: 6px; }
+.ranking tr.status-row td { padding-top: 0; }
+.status-row .status-form { margin-top: 0; flex-wrap: nowrap; }
+.status-row .status-note { max-width: 420px; }
+@media (max-width: 720px) { .status-row .status-form { flex-wrap: wrap; } }

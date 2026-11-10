@@ -48,7 +48,7 @@ def test_xlsx_never_evaluates_formulas_and_never_exports_demographics():
     ws = wb["=v"]
     # Shown exactly as written, stored as text (data_type "s"), never as a formula.
     assert ws["B2"].value == "=HYPERLINK(\"http://evil\")" and ws["B2"].data_type == "s"
-    assert ws["E2"].value == "+cmd" and ws["I2"].value == "@SUM(A1)" and ws["H2"].value == "- опыт с Python"
+    assert ws["G2"].value == "+cmd" and ws["K2"].value == "@SUM(A1)" and ws["J2"].value == "- опыт с Python"
     assert wb["xlsx.summary"]["A1"].value == "=1+1" and wb["xlsx.summary"]["A1"].data_type == "s"
     import zipfile
     with zipfile.ZipFile(io.BytesIO(data)) as z:
@@ -61,7 +61,7 @@ def test_xlsx_strips_control_characters_instead_of_crashing():
     rows = [candidate(1, 80, name="Bad\x01name\x0b", summary="line\x0cbreak")]
     wb = load_workbook(io.BytesIO(export.to_xlsx("s\x02", [export.VacancySheet("v\x03", rows, 1)], t)))
     assert wb.sheetnames == ["xlsx.summary", "v"]
-    assert wb["v"]["B2"].value == "Badname" and wb["v"]["E2"].value == "linebreak"
+    assert wb["v"]["B2"].value == "Badname" and wb["v"]["G2"].value == "linebreak"
 
 
 @pytest.mark.parametrize("title,expected", [("a/b:c*?[d]", "a b c   d"), ("x" * 40, "x" * 31), ("", "Sheet")])

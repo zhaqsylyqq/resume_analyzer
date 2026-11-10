@@ -9,6 +9,9 @@ services:
     env_file: ../.env
     environment:
       SESSION_COOKIE_SECURE: "1"
+      # cloudflared reaches the app over the compose network, not loopback: trust that
+      # network to pass the visitor IP (rate limits per visitor, see docs/specs/S4-*.md)
+      TRUSTED_PROXIES: "127.0.0.1,::1,172.16.0.0/12"
     volumes:
       - app-data:/app/instance
     restart: unless-stopped

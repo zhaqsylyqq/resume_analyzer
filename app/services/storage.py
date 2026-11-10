@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from flask import Flask, current_app, g
@@ -88,6 +88,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
     action      TEXT NOT NULL,
     session_id  INTEGER,
     detail      TEXT
+);
+CREATE TABLE IF NOT EXISTS candidate_status (
+    vacancy_id  INTEGER NOT NULL REFERENCES vacancies(id) ON DELETE CASCADE,
+    resume_id   INTEGER NOT NULL REFERENCES resumes(id) ON DELETE CASCADE,
+    status      TEXT NOT NULL,
+    note        TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL,
+    updated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    PRIMARY KEY (vacancy_id, resume_id)
 );
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_vacancies_session ON vacancies(session_id);
@@ -458,6 +467,42 @@ def get_user(db: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
     return db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
 
 
+# Candidate pipeline (SIS 10-11 change request CR-01) ---------------------------------------
+
+CANDIDATE_STATUSES = ("new", "shortlist", "interview", "offer", "rejected")
+MAX_NOTE = 500
+
+
+def set_candidate_status(db: sqlite3.Connection, vacancy_id: int, resume_id: int, status: str, note: str,
+                         user_id: int | None) -> None:
+    """Status of one candidate for one vacancy (a person can be shortlisted for one vacancy
+    and rejected for another). "new" with an empty note removes the row: that is the default."""
+    if status not in CANDIDATE_STATUSES:
+        raise ValueError(status)
+    note = note.strip()[:MAX_NOTE]
+    with db:
+        if status == "new" and not note:
+            db.execute("DELETE FROM candidate_status WHERE vacancy_id = ? AND resume_id = ?", (vacancy_id, resume_id))
+        else:
+            db.execute(
+                """INSERT INTO candidate_status (vacancy_id, resume_id, status, note, updated_at, updated_by)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (vacancy_id, resume_id) DO UPDATE SET
+                     status = excluded.status, note = excluded.note,
+                     updated_at = excluded.updated_at, updated_by = excluded.updated_by""",
+                (vacancy_id, resume_id, status, note, now(), user_id),
+            )
+
+
+def is_scored(db: sqlite3.Connection, vacancy_id: int, resume_id: int) -> bool:
+    return db.execute("SELECT 1 FROM scores WHERE vacancy_id = ? AND resume_id = ?", (vacancy_id, resume_id)).fetchone() is not None
+
+
+def email_taken(db: sqlite3.Connection, email: str) -> bool:
+    """SIS 10-11: one account per email (case-insensitive), so usage stats count real people."""
+    return db.execute("SELECT 1 FROM users WHERE lower(email) = lower(?) LIMIT 1", (email,)).fetchone() is not None
+
+
 def get_user_by_name(db: sqlite3.Connection, username: str) -> sqlite3.Row | None:
     return db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
 
@@ -489,6 +534,20 @@ def audit(db: sqlite3.Connection, action: str, user: sqlite3.Row | None = None, 
             (now(), user["id"] if user else None, user["username"] if user else username, action, session_id,
              (detail or "")[:500] or None),
         )
+
+
+def audit_once(db: sqlite3.Connection, action: str, user: sqlite3.Row | None, session_id: int | None,
+               detail: str | None, minutes: int = 10) -> bool:
+    """SIS 10-11 fix: log a view only if the same user has not logged the same view in the
+    last `minutes`; refreshes and filter clicks no longer flood the audit log."""
+    since = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat(timespec="seconds")
+    seen = db.execute(
+        "SELECT 1 FROM audit_log WHERE action = ? AND user_id IS ? AND session_id IS ? AND detail IS ? AND created_at >= ? LIMIT 1",
+        (action, user["id"] if user else None, session_id, detail, since),
+    ).fetchone()
+    if seen is None:
+        audit(db, action, user, session_id, detail)
+    return seen is None
 
 
 def list_audit(db: sqlite3.Connection, limit: int = 200) -> list[sqlite3.Row]:

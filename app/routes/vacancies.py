@@ -66,10 +66,11 @@ def delete(session_id: int, vacancy_id: int):
 def show(session_id: int, vacancy_id: int):
     session, vacancy = _load(session_id, vacancy_id)
     db = storage.get_db()
-    storage.audit(db, "ranking_open", g.user, session_id, f"vacancy={vacancy_id}")
+    storage.audit_once(db, "ranking_open", g.user, session_id, f"vacancy={vacancy_id}")
     top = scoring.parse_top(request.args.get("top", str(scoring.TOP_CHOICES[1])))
+    status, query = _filters()
     candidates = scoring.ranking(db, vacancy_id)
-    shortlist = scoring.top_n(candidates, top)
+    shortlist = scoring.top_n(scoring.filter_candidates(candidates, status, query), top)
     progress = storage.progress(db, session_id)
 
     bias_report = json.loads(vacancy["bias_json"]) if vacancy["bias_json"] else None
@@ -84,6 +85,11 @@ def show(session_id: int, vacancy_id: int):
         vacancies=storage.list_vacancies(db, session_id),
         candidates=shortlist,
         total=len(candidates),
+        statuses=storage.CANDIDATE_STATUSES,
+        status_counts=scoring.status_counts(candidates, storage.CANDIDATE_STATUSES),
+        status_filter=status,
+        query=query,
+        filter_args=_filter_args(top, status, query),
         stats=scoring.summary_stats(candidates),
         top=top,
         top_choices=scoring.TOP_CHOICES,
@@ -92,6 +98,43 @@ def show(session_id: int, vacancy_id: int):
         highlighted=bias.highlight(vacancy["text"], bias_report["findings"]),
         diversity=diversity.report(db, [c.resume_id for c in candidates], [c.resume_id for c in shortlist]),
     )
+
+
+def _filters() -> tuple[str | None, str]:
+    """CR-01: ?status=shortlist and ?q=name narrow the ranking and the exports alike."""
+    return (scoring.parse_status(request.values.get("status"), storage.CANDIDATE_STATUSES),
+            request.values.get("q", "").strip()[:100])
+
+
+def _filter_args(top: int | None, status: str | None, query: str) -> dict[str, str]:
+    args = {"top": str(top) if top else "all"}
+    if status:
+        args["status"] = status
+    if query:
+        args["q"] = query
+    return args
+
+
+@bp.post("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/candidates/<int:resume_id>/status")
+def set_status(session_id: int, vacancy_id: int, resume_id: int):
+    """CR-01: move a candidate through the hiring pipeline and keep a short note."""
+    _load(session_id, vacancy_id)  # owner check (404 for foreign sessions)
+    db = storage.get_db()
+    if not storage.is_scored(db, vacancy_id, resume_id):
+        abort(404)
+    status = request.form.get("status", "")
+    if status not in storage.CANDIDATE_STATUSES:
+        abort(400)
+    note = request.form.get("note", "")
+    storage.set_candidate_status(db, vacancy_id, resume_id, status, note, g.user["id"])
+    storage.audit(db, "candidate_status", g.user, session_id,
+                  f"vacancy={vacancy_id} resume={resume_id} status={status}")
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify(status=status, label=translate(f"status.{status}"), message=translate("status.saved"))
+    flash("status.saved", "success")
+    back = {k: v for k, v in (("top", request.form.get("top")), ("status", request.form.get("filter_status")),
+                              ("q", request.form.get("q"))) if v}
+    return redirect(url_for("vacancies.show", session_id=session_id, vacancy_id=vacancy_id, **back) + f"#c{resume_id}")
 
 
 @bp.post("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/bias")
@@ -144,9 +187,10 @@ def _download(data: bytes, stem: str, ext: str, session_id: int, vacancy_id: int
 def _shortlist(session_id: int, vacancy_id: int):
     session, vacancy = _load(session_id, vacancy_id)
     top = scoring.parse_top(request.args.get("top"))
+    status, query = _filters()
     ranked = scoring.ranking(storage.get_db(), vacancy_id)
-    stem = _filename(session["title"], vacancy["title"], f"top{top}" if top else "all")
-    return session, vacancy, top, ranked, scoring.top_n(ranked, top), stem
+    stem = _filename(session["title"], vacancy["title"], status or "", f"top{top}" if top else "all")
+    return session, vacancy, top, ranked, scoring.top_n(scoring.filter_candidates(ranked, status, query), top), stem
 
 
 @bp.get("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/export.csv")

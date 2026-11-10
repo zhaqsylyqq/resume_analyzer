@@ -34,13 +34,17 @@ class RankedCandidate:
     missing_skills: list[str] = field(default_factory=list)
     strengths: list[str] = field(default_factory=list)
     concerns: list[str] = field(default_factory=list)
+    status: str = "new"  # CR-01 candidate pipeline
+    note: str = ""
 
 
 def ranking(db: sqlite3.Connection, vacancy_id: int) -> list[RankedCandidate]:
     rows = db.execute(
         """
-        SELECT r.id AS resume_id, r.filename, r.profile_json, s.score, s.verdict, s.summary, s.details_json
+        SELECT r.id AS resume_id, r.filename, r.profile_json, s.score, s.verdict, s.summary, s.details_json,
+               cs.status, cs.note
         FROM scores s JOIN resumes r ON r.id = s.resume_id
+        LEFT JOIN candidate_status cs ON cs.vacancy_id = s.vacancy_id AND cs.resume_id = s.resume_id
         WHERE s.vacancy_id = ? AND r.status = 'done'
         ORDER BY s.score DESC, r.id ASC
         """,
@@ -70,6 +74,8 @@ def ranking(db: sqlite3.Connection, vacancy_id: int) -> list[RankedCandidate]:
                 missing_skills=details.get("missing_skills", []),
                 strengths=details.get("strengths", []),
                 concerns=details.get("concerns", []),
+                status=row["status"] or "new",
+                note=row["note"] or "",
             )
         )
     return ranked
@@ -90,6 +96,27 @@ def top_n(candidates: list[RankedCandidate], n: int | None) -> list[RankedCandid
         return list(candidates)
     cutoff = candidates[n - 1].score
     return [c for i, c in enumerate(candidates) if i < n or c.score == cutoff]
+
+
+def status_counts(candidates: list[RankedCandidate], statuses: tuple[str, ...]) -> dict[str, int]:
+    counts = {s: 0 for s in statuses}
+    for c in candidates:
+        counts[c.status] = counts.get(c.status, 0) + 1
+    return counts
+
+
+def parse_status(value: str | None, statuses: tuple[str, ...]) -> str | None:
+    return value if value in statuses else None
+
+
+def filter_candidates(candidates: list[RankedCandidate], status: str | None, query: str = "") -> list[RankedCandidate]:
+    """CR-01: keep one status and/or a name search; ranks stay as in the full ranking."""
+    needle = query.strip().casefold()
+    return [
+        c for c in candidates
+        if (status is None or c.status == status)
+        and (not needle or needle in " ".join(filter(None, (c.name, c.filename, c.headline))).casefold())
+    ]
 
 
 def summary_stats(candidates: list[RankedCandidate]) -> dict[str, float | int]:
@@ -115,11 +142,12 @@ def to_csv(candidates: list[RankedCandidate], t: Callable[[str], str]) -> bytes:
     writer = csv.writer(buffer, delimiter=";", quoting=csv.QUOTE_MINIMAL, lineterminator="\r\n")
     writer.writerow([t(f"csv.{col}") for col in (
         "rank", "name", "file", "score", "verdict", "summary", "matched", "missing",
-        "strengths", "concerns", "headline", "experience", "email", "phone")])
+        "strengths", "concerns", "headline", "experience", "email", "phone", "status", "note")])
     for c in candidates:
         writer.writerow([_safe_cell(v) for v in (
             c.rank, c.name or "", c.filename, c.score, t(f"verdict.{c.verdict}"), c.summary,
             ", ".join(c.matched_skills), ", ".join(c.missing_skills),
             "; ".join(c.strengths), "; ".join(c.concerns), c.headline or "",
-            "" if c.experience_years is None else c.experience_years, c.email or "", c.phone or "")])
+            "" if c.experience_years is None else c.experience_years, c.email or "", c.phone or "",
+            t(f"status.{c.status}"), c.note)])
     return ("﻿" + buffer.getvalue()).encode("utf-8")

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import re
 import threading
 import time
@@ -227,8 +228,41 @@ def init_auth(app: Flask) -> None:
 
 # Routes -------------------------------------------------------------------------------------
 
-def _client_ip() -> str:
-    return request.remote_addr or "unknown"
+def _valid_ip(value: str | None) -> str | None:
+    try:
+        return str(ipaddress.ip_address((value or "").strip()))
+    except ValueError:
+        return None
+
+
+def _trusted(peer: str, proxies: tuple[str, ...]) -> bool:
+    """Peer matches an address or a network (e.g. 172.16.0.0/12 for a Docker network)."""
+    try:
+        address = ipaddress.ip_address(peer)
+    except ValueError:
+        return False
+    for entry in proxies:
+        try:
+            if address in ipaddress.ip_network(entry, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def client_ip() -> str:
+    """Real visitor IP. Behind Cloudflare Tunnel every request comes from 127.0.0.1, so the
+    limiters would treat all visitors as one person. Only a trusted proxy (loopback by
+    default) may pass the visitor IP in CF-Connecting-IP or as the last X-Forwarded-For hop;
+    from anyone else these headers are ignored, so they cannot be spoofed to dodge limits."""
+    peer = request.remote_addr or "unknown"
+    if not _trusted(peer, current_app.config.get("TRUSTED_PROXIES", ())):
+        return peer
+    forwarded = request.headers.get("X-Forwarded-For", "").split(",")
+    return _valid_ip(request.headers.get("CF-Connecting-IP")) or _valid_ip(forwarded[-1]) or peer
+
+
+_client_ip = client_ip
 
 
 @bp.route("/login", methods=["GET", "POST"])
@@ -307,6 +341,8 @@ def register():
             errors["code"] = "auth.error.locked" if limiter.blocked(ip_key) else "register.error.code"
     if error := validate_email(form["email"], required=True):
         errors["email"] = error
+    elif storage.email_taken(storage.get_db(), form["email"]):
+        errors["email"] = "auth.error.email_taken"
     password = request.form.get("password", "")
     db = storage.get_db()
     if error := validate_username(form["username"]):
@@ -372,6 +408,8 @@ def create_user():
         errors["username"] = "auth.error.username_taken"
     if error := validate_email(email, required=False):
         errors["email"] = error
+    elif email and storage.email_taken(db, email):
+        errors["email"] = "auth.error.email_taken"
     if error := validate_password(password):
         errors["password"] = error
     if role not in ROLES:

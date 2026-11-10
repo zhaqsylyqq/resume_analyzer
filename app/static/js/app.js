@@ -73,5 +73,29 @@
     }
   });
 
+  // CR-01 candidate status: save without reloading (the plain form still works without JS).
+  // Changing the status saves at once; the note is saved with the button or Enter.
+  function saveStatus(form) {
+    var button = form.querySelector("[data-status-save]");
+    var select = form.querySelector('select[name="status"]');
+    if (button) button.disabled = true;
+    request(form.action, { method: "POST", body: new FormData(form) })
+      .then(function (data) {
+        select.className = select.className.replace(/status-select--\w+/, "status-select--" + data.status);
+        toast(data.message, "success");
+      })
+      .catch(function (error) { toast(error.message, "danger"); })
+      .then(function () { if (button) button.disabled = false; });
+  }
+  document.addEventListener("change", function (event) {
+    var form = event.target.closest("[data-status-form]");
+    if (form && event.target.name === "status") saveStatus(form);
+  });
+  document.addEventListener("submit", function (event) {
+    if (!event.target.matches("[data-status-form]")) return;
+    event.preventDefault();
+    saveStatus(event.target);
+  });
+
   window.App = { request: request, toast: toast, csrfToken: csrfToken };
 })();
