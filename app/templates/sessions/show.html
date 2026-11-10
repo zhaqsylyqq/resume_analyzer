@@ -112,6 +112,11 @@
                 <span class="badge badge--{{ 'danger' if counts.high else 'warning' }} mt-2">{{ t('bias.badge', n=counts.high + counts.medium) }}</span>
               {% endif %}
             </a>
+            <form method="post" action="{{ url_for('vacancies.delete', session_id=session.id, vacancy_id=v.id) }}"
+                  class="vacancy-list__delete" data-confirm="{{ t('vacancy.delete.confirm', title=v.title) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn--sm btn--ghost btn--danger">{{ t('vacancy.delete') }}</button>
+            </form>
           </li>
         {% endfor %}
       </ul>

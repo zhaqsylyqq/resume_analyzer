@@ -51,6 +51,17 @@ def create(session_id: int):
     return redirect(url_for("sessions.show", session_id=session_id))
 
 
+@bp.post("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/delete")
+def delete(session_id: int, vacancy_id: int):
+    """S3: delete one vacancy with its ranking; the session and its resumes stay."""
+    _session, vacancy = _load(session_id, vacancy_id)
+    db = storage.get_db()
+    storage.delete_vacancy(db, session_id, vacancy_id)
+    storage.audit(db, "vacancy_delete", g.user, session_id, vacancy["title"])
+    flash("vacancy.deleted", "success")
+    return redirect(url_for("sessions.show", session_id=session_id))
+
+
 @bp.get("/sessions/<int:session_id>/vacancies/<int:vacancy_id>")
 def show(session_id: int, vacancy_id: int):
     session, vacancy = _load(session_id, vacancy_id)

@@ -29,6 +29,7 @@ from flask import (
 )
 
 from . import settings as app_settings
+from .starter import create_starter_session
 from .i18n import translate
 from .security import is_safe_redirect
 from .services import stats as usage_stats
@@ -321,6 +322,7 @@ def register():
         return render(errors), status
 
     user_id = storage.create_user(db, form["username"], hash_password(password), "recruiter", form["email"])
+    create_starter_session(db, user_id, current_app.config["STARTER_SESSION"])
     signups.record(_client_ip())
     user = storage.get_user(db, user_id)
     storage.audit(db, "register", user, detail=_client_ip())
@@ -377,6 +379,7 @@ def create_user():
     if errors:
         return _users_page({"username": username, "email": email, "role": role}, errors, status=400)
     user_id = storage.create_user(db, username, hash_password(password), role, email)
+    create_starter_session(db, user_id, current_app.config["STARTER_SESSION"])
     storage.audit(db, "user_create", g.user, detail=f"{username} ({role}) id={user_id}")
     flash("admin.user_created", "success")
     return redirect(url_for("auth.users"))
@@ -508,6 +511,7 @@ def create_admin(username: str, password: str) -> None:
         if storage.get_user_by_name(db, username):
             raise click.ClickException(f"User '{username}' already exists.")
         user_id = storage.create_user(db, username, hash_password(password), "admin")
+        create_starter_session(db, user_id, current_app.config["STARTER_SESSION"])
         storage.audit(db, "user_create", username="cli", detail=f"{username} (admin) id={user_id}")
     finally:
         db.close()

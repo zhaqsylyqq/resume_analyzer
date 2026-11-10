@@ -462,3 +462,6 @@ details.more > div { margin-top: 10px; display: grid; gap: 10px; }
 /* S2 — checkboxes in the registration settings */
 .check { display: flex; align-items: flex-start; gap: 10px; font-size: 0.925rem; cursor: pointer; }
 .check input { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--accent); flex: none; }
+
+/* S3 — delete a vacancy from the session page */
+.vacancy-list__delete { display: flex; justify-content: flex-end; margin: -4px 0 8px; }

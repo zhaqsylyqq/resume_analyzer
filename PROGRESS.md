@@ -21,6 +21,7 @@
 | 15 | S1 usage statistics + sign-up with invite code | done |
 | 16 | S2 registration switches, email, daily resume limit | done |
 | 17 | Public access: hrscreen.date via Cloudflare Tunnel | live from the owner's laptop; server move pending ([DEPLOY](docs/DEPLOY.md)) |
+| 18 | S3 example session for new users + delete a vacancy | done |
 
 ## Done
 - Phase 0: app factory, env-based config, CSRF + security headers, RU/KK i18n, design system
@@ -179,6 +180,12 @@
     person by email was too much overhead.
   - `deploy/docker-compose.yml` (app + cloudflared) and `docs/DEPLOY.md` prepare the move
     to an always-on server (not run yet).
+
+- Phase 18 (S3, [spec](docs/specs/S3-starter-session-and-vacancy-delete.md)): every new
+  user gets an example session with the Python (Middle/Senior) vacancy (no AI call, not
+  counted as their own session in statistics, `STARTER_SESSION=0` turns it off); vacancies
+  can be deleted from the session page (scores cascade, resumes stay; audited). 10 new
+  tests, 325 in total.
 
 ## Next (backlog)
 - Move hosting off the laptop to an always-on server with `deploy/docker-compose.yml`

@@ -18,7 +18,7 @@ has the user-facing setup guide.
   fair round-robin queue with ETA, RU/KK UI, Dockerfile (verified), CI.
 - Tasks 1–6 below are all done (see `PROGRESS.md`), plus S1 usage statistics and S2
   registration settings (open / invite code / closed), email and a daily resume limit.
-- 315 tests pass. The AI provider is always mocked in tests; tests sign in as a test
+- 325 tests pass. The AI provider is always mocked in tests; tests sign in as a test
   recruiter (`tests/conftest.py`: `client`, `anon_client`, `make_user`, `login`).
 - **Deployment:** the domain `hrscreen.date` is at Cloudflare (owner's account). A named
   Cloudflare Tunnel `hrscreen` serves it today from the owner's laptop via
@@ -99,6 +99,7 @@ app/
                        `create-admin` CLI
   retention.py         R1: purge sessions older than RETENTION_DAYS, `purge-old` CLI
   settings.py          S2: admin-editable settings (registration, invite code, daily limit)
+  starter.py           S3: example session for new users (data/starter_vacancy_ru.txt)
   routes/              core.py (/ , /lang, /healthz), sessions.py, screening.py (upload, retry),
                        vacancies.py (ranking, exports, bias check)
   services/

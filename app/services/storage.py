@@ -221,6 +221,15 @@ def add_vacancy(db: sqlite3.Connection, session_id: int, title: str, text: str) 
     return int(vacancy_id)
 
 
+def delete_vacancy(db: sqlite3.Connection, session_id: int, vacancy_id: int) -> bool:
+    """S3: remove one vacancy and its scores (cascade); resumes stay in the session."""
+    with db:
+        deleted = db.execute("DELETE FROM vacancies WHERE id = ? AND session_id = ?", (vacancy_id, session_id)).rowcount > 0
+        if deleted:
+            touch_session(db, session_id)
+    return deleted
+
+
 def list_vacancies(db: sqlite3.Connection, session_id: int) -> list[sqlite3.Row]:
     return db.execute("SELECT * FROM vacancies WHERE session_id = ? ORDER BY id", (session_id,)).fetchall()
 
@@ -380,9 +389,10 @@ def unscored_vacancies(db: sqlite3.Connection, resume_id: int) -> list[sqlite3.R
 def save_scores(db: sqlite3.Connection, resume_id: int, assessments: Iterable[FitAssessment]) -> None:
     stamp = now()
     with db:
+        # A vacancy deleted while this resume was being scored is skipped (no FK error).
         db.executemany(
             """INSERT OR REPLACE INTO scores (resume_id, vacancy_id, score, verdict, summary, details_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM vacancies WHERE id = ?2)""",
             [
                 (
                     resume_id,

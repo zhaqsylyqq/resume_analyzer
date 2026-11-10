@@ -25,6 +25,7 @@ def app(tmp_path):
             # Same for settings a developer may have in .env (S1/S2): tests start from defaults.
             "INVITE_CODE": "",
             "DAILY_RESUME_LIMIT": 30,
+            "STARTER_SESSION": True,
         }
     )
     yield app
