@@ -109,12 +109,18 @@ def parse_status(value: str | None, statuses: tuple[str, ...]) -> str | None:
     return value if value in statuses else None
 
 
-def filter_candidates(candidates: list[RankedCandidate], status: str | None, query: str = "") -> list[RankedCandidate]:
-    """CR-01: keep one status and/or a name search; ranks stay as in the full ranking."""
+FIT_VERDICTS = ("strong", "good")  # score >= 65, the "Подходят" tile
+
+
+def filter_candidates(candidates: list[RankedCandidate], status: str | None, query: str = "",
+                      fit: bool = False) -> list[RankedCandidate]:
+    """CR-01: keep one status and/or a name search; S5: only suitable candidates.
+    Ranks stay as in the full ranking."""
     needle = query.strip().casefold()
     return [
         c for c in candidates
         if (status is None or c.status == status)
+        and (not fit or c.verdict in FIT_VERDICTS)
         and (not needle or needle in " ".join(filter(None, (c.name, c.filename, c.headline))).casefold())
     ]
 

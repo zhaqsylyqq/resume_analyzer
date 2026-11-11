@@ -64,7 +64,7 @@
 <section class="mb-4" aria-labelledby="users-title">
   <h2 id="users-title">{{ t('stats.users_table') }}</h2>
   <div class="table-wrap">
-    <table class="table">
+    <table class="table table--cards">
       <thead>
         <tr>
           <th scope="col">{{ t('auth.username') }}</th>
@@ -81,13 +81,13 @@
         {% for u in data.users %}
         <tr>
           <td><strong>{{ u.username }}</strong> <span class="muted small">{{ t('role.' ~ u.role) }}</span>{% if u.email %}<div class="small muted">{{ u.email }}</div>{% endif %}</td>
-          <td class="small">{{ when(u.created_at) }}</td>
-          <td class="small">{{ when(u.first_login) }}</td>
-          <td class="small">{{ when(u.last_login) }}</td>
-          <td class="num">{{ u.logins }}</td>
-          <td class="num">{{ u.sessions }}</td>
-          <td class="num">{{ u.resumes }}</td>
-          <td class="num">{{ u.exports }}</td>
+          <td class="small" data-label="{{ t('stats.col.registered') }}">{{ when(u.created_at) }}</td>
+          <td class="small" data-label="{{ t('stats.col.first_login') }}">{{ when(u.first_login) }}</td>
+          <td class="small" data-label="{{ t('stats.col.last_login') }}">{{ when(u.last_login) }}</td>
+          <td class="num" data-label="{{ t('stats.logins') }}">{{ u.logins }}</td>
+          <td class="num" data-label="{{ t('stats.sessions') }}">{{ u.sessions }}</td>
+          <td class="num" data-label="{{ t('stats.resumes') }}">{{ u.resumes }}</td>
+          <td class="num" data-label="{{ t('stats.exports') }}">{{ u.exports }}</td>
         </tr>
         {% endfor %}
       </tbody>

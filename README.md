@@ -27,6 +27,7 @@ kept read-only in [`legacy/`](legacy/).
 | S1 | Usage statistics for admins (users, sign-ins, sessions, resumes, exports by day; Excel report) and sign-up with an invite code |
 | S2 | Admin switches for sign-up (open / with invite code / closed), email on sign-up, daily resume limit per recruiter |
 | S3 | Example session with a Python vacancy for every new user; any vacancy can be deleted |
+| S5 | “Подходят” tile opens the suitable candidates; mobile layout (top bar, cards for admin tables); coloured score pill and visible bar |
 | CR-01 | Candidate pipeline — status per candidate (new, shortlist, interview, offer, rejected) with a note, status filter, name search; status and note in all exports |
 | Q1 | Fair queue — sessions take turns resume by resume; the session page shows the time remaining |
 | R1 | Data retention (sessions untouched for `RETENTION_DAYS` are deleted) and consistent database backups |

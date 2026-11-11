@@ -301,13 +301,17 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .progress--success .progress__bar { background: var(--success); }
 
 /* Score bar */
+/* S5: the score is a coloured pill + a visible bar (the fill is a block, so its width applies) */
 .score { display: flex; align-items: center; gap: 10px; min-width: 150px; }
-.score__value { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 2.2em; text-align: right; }
-.score__track { flex: 1; height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
-.score__fill { height: 100%; border-radius: inherit; background: var(--score-color, var(--accent)); }
-.score--high { --score-color: var(--success); }
-.score--mid { --score-color: var(--accent); }
-.score--low { --score-color: var(--danger); }
+.score__value {
+  font-weight: 800; font-variant-numeric: tabular-nums; min-width: 2.9em; text-align: center;
+  padding: 2px 8px; border-radius: 999px; background: var(--score-soft, var(--surface-2)); color: var(--score-ink, var(--text));
+}
+.score__track { flex: 1; height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.score__fill { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--score-color, var(--accent)); }
+.score--high { --score-color: var(--success); --score-soft: var(--success-soft); --score-ink: var(--success); }
+.score--mid { --score-color: var(--accent); --score-soft: var(--accent-soft); --score-ink: var(--accent-strong); }
+.score--low { --score-color: var(--danger); --score-soft: var(--danger-soft); --score-ink: var(--danger); }
 
 /* Tables */
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
@@ -492,3 +496,57 @@ details.more > div { margin-top: 10px; display: grid; gap: 10px; }
 .status-row .status-form { margin-top: 0; flex-wrap: nowrap; }
 .status-row .status-note { max-width: 420px; }
 @media (max-width: 720px) { .status-row .status-form { flex-wrap: wrap; } }
+
+/* S5 — clickable stat tiles (ranking: "Оценено" shows all, "Подходят" filters) */
+a.stat--link { display: block; text-decoration: none; color: inherit; transition: border-color 0.15s, box-shadow 0.15s; }
+a.stat--link:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+a.stat--link .stat__label span { color: var(--accent-strong); font-weight: 700; }
+a.stat--fit { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
+a.stat--fit .stat__value { color: var(--success); }
+a.stat--link.is-active { border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
+
+/* S5 — mobile layout */
+.layout-split > *, .stack > *, .grid > * { min-width: 0; }
+.file-list { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 979px) { .layout-split { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 720px) {
+  /* top bar: brand + actions on the first row, the menu scrolls on its own row */
+  .topbar__inner { flex-wrap: wrap; gap: 8px 12px; padding-top: 8px; }
+  .topbar__nav { order: 3; flex: 1 0 100%; margin: 0 -4px; overflow-x: auto; scrollbar-width: none; padding-bottom: 6px; }
+  .topbar__nav::-webkit-scrollbar { display: none; }
+  .page-header { flex-wrap: wrap; }
+  .page-header .row { flex-wrap: wrap; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .card__header { flex-wrap: wrap; gap: 8px; }
+  .file-item { align-items: flex-start; flex-wrap: wrap; }
+  .segmented { max-width: 100%; overflow-x: auto; }
+  .search-form { max-width: none; flex-basis: 100%; }
+  /* ranking cards: score pill and bar larger, full width */
+  .ranking td:nth-child(3) { grid-column: 2; }
+  .score { min-width: 0; }
+  .score__value { font-size: 1.05rem; padding: 3px 10px; }
+  .score__track { height: 10px; }
+  /* the status row belongs to the candidate card above it */
+  .ranking tr.has-status-row { border-bottom: 0; padding-bottom: 8px; }
+  .ranking tr.status-row { padding-top: 0; grid-template-columns: 1fr; }
+  .ranking tr.status-row td:first-child { display: none; }
+  .ranking tr.status-row td { padding-left: 56px; }
+  .status-row .status-form { flex-wrap: wrap; }
+  .status-row .status-select { flex: 1 0 100%; }
+  .status-row .status-note { max-width: none; flex: 1 1 0; min-width: 0; }
+  .table th, .table td { padding: 10px; }
+}
+@media (max-width: 720px) {
+  /* admin tables become one card per row; each cell shows its column name */
+  .table--cards thead { display: none; }
+  .table--cards, .table--cards tbody, .table--cards tr, .table--cards td { display: block; width: 100%; }
+  .table--cards tr { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .table--cards tbody tr:last-child { border-bottom: 0; }
+  .table--cards td { border: 0; padding: 3px 0; text-align: left; }
+  .table--cards td[data-label] { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; }
+  .table--cards td[data-label]::before { content: attr(data-label); font-size: 0.78rem; color: var(--text-muted); font-weight: 600; flex: none; }
+  .table--cards td.num { text-align: right; }
+  .table--cards td[data-label] > * { min-width: 0; }
+}
+#ranking-list { scroll-margin-top: 84px; }
+@media (max-width: 720px) { #ranking-list { scroll-margin-top: 120px; } }

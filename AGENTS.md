@@ -18,7 +18,7 @@ has the user-facing setup guide.
   fair round-robin queue with ETA, RU/KK UI, Dockerfile (verified), CI.
 - Tasks 1–6 below are all done (see `PROGRESS.md`), plus S1 usage statistics and S2
   registration settings (open / invite code / closed), email and a daily resume limit.
-- 354 tests pass. The AI provider is always mocked in tests; tests sign in as a test
+- 361 tests pass. The AI provider is always mocked in tests; tests sign in as a test
   recruiter (`tests/conftest.py`: `client`, `anon_client`, `make_user`, `login`).
 - **Deployment:** the domain `hrscreen.date` is at Cloudflare (owner's account). A named
   Cloudflare Tunnel `hrscreen` serves it today from the owner's laptop via

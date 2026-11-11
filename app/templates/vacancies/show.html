@@ -38,23 +38,33 @@
   </div>
 {% endif %}
 
+{% set no_fit = dict(filter_args) %}{% set _ = no_fit.pop('fit', None) %}
 <div class="stats mb-4">
-  <div class="stat"><div class="stat__value">{{ stats.count }}</div><div class="stat__label">{{ t('rank.stat.scored') }}</div></div>
+  <a class="stat stat--link{{ ' is-active' if total and not fit_filter and not status_filter and not query and top is none }}" href="{{ url_for('vacancies.show', session_id=session.id, vacancy_id=vacancy.id, top='all') }}#ranking-list">
+    <div class="stat__value">{{ stats.count }}</div><div class="stat__label">{{ t('rank.stat.scored') }} <span aria-hidden="true">→</span></div></a>
   <div class="stat"><div class="stat__value">{{ stats.best }}</div><div class="stat__label">{{ t('rank.stat.best') }}</div></div>
   <div class="stat"><div class="stat__value">{{ stats.average }}</div><div class="stat__label">{{ t('rank.stat.average') }}</div></div>
-  <div class="stat"><div class="stat__value">{{ stats.strong + stats.good }}</div><div class="stat__label">{{ t('rank.stat.fit') }}</div></div>
+  {% if fit_filter %}
+  <a class="stat stat--link stat--fit is-active" aria-current="true" title="{{ t('rank.fit.reset') }}" href="{{ url_for('vacancies.show', session_id=session.id, vacancy_id=vacancy.id, **no_fit) }}#ranking-list">
+  {% else %}
+  <a class="stat stat--link stat--fit" title="{{ t('rank.fit.show') }}" href="{{ url_for('vacancies.show', session_id=session.id, vacancy_id=vacancy.id, **dict(no_fit, top='all', fit='1')) }}#ranking-list">
+  {% endif %}
+    <div class="stat__value">{{ stats.strong + stats.good }}</div><div class="stat__label">{{ t('rank.stat.fit') }} <span aria-hidden="true">{{ '✕' if fit_filter else '→' }}</span></div></a>
 </div>
 
 <div class="layout-split">
   <section class="stack">
-    <div class="row row--between">
+    <div class="row row--between" id="ranking-list">
       <div class="segmented" role="group" aria-label="{{ t('rank.top_label') }}">
         {% for n in top_choices %}
           <a href="{{ url_for('vacancies.show', session_id=session.id, vacancy_id=vacancy.id, **dict(filter_args, top=n)) }}" class="{{ 'is-active' if top == n }}" {% if top == n %}aria-current="true"{% endif %}>Top {{ n }}</a>
         {% endfor %}
         <a href="{{ url_for('vacancies.show', session_id=session.id, vacancy_id=vacancy.id, **dict(filter_args, top='all')) }}" class="{{ 'is-active' if top is none }}" {% if top is none %}aria-current="true"{% endif %}>{{ t('rank.all') }}</a>
       </div>
-      <span class="muted small">{{ t('rank.showing', shown=candidates | length, total=total) }}</span>
+      <span class="row small">
+        {% if fit_filter %}<a class="status-chip is-active" href="{{ url_for('vacancies.show', session_id=session.id, vacancy_id=vacancy.id, **no_fit) }}#ranking-list" title="{{ t('rank.fit.reset') }}">{{ t('rank.fit.active') }} ✕</a>{% endif %}
+        <span class="muted">{{ t('rank.showing', shown=candidates | length, total=total) }}</span>
+      </span>
     </div>
 
     {% if total %}
@@ -69,6 +79,7 @@
       <form class="search-form" method="get" role="search">
         <input type="hidden" name="top" value="{{ filter_args.top }}">
         {% if status_filter %}<input type="hidden" name="status" value="{{ status_filter }}">{% endif %}
+        {% if fit_filter %}<input type="hidden" name="fit" value="1">{% endif %}
         <input class="input" type="search" name="q" value="{{ query }}" maxlength="100" placeholder="{{ t('rank.search') }}" aria-label="{{ t('rank.search') }}">
         <button class="btn btn--sm" type="submit">{{ t('rank.search.button') }}</button>
         {% if query %}<a class="btn btn--sm" href="{{ url_for('vacancies.show', session_id=session.id, vacancy_id=vacancy.id, **dict(filter_args, q='')) }}">{{ t('rank.search.reset') }}</a>{% endif %}
@@ -142,6 +153,7 @@
             <input type="hidden" name="top" value="{{ filter_args.top }}">
             {% if status_filter %}<input type="hidden" name="filter_status" value="{{ status_filter }}">{% endif %}
             {% if query %}<input type="hidden" name="q" value="{{ query }}">{% endif %}
+            {% if fit_filter %}<input type="hidden" name="fit" value="1">{% endif %}
             <select class="select status-select status-select--{{ c.status }}" name="status" aria-label="{{ t('status.label') }}: {{ c.name or c.filename }}">
               {% for s in statuses %}<option value="{{ s }}" {% if s == c.status %}selected{% endif %}>{{ t('status.' ~ s) }}</option>{% endfor %}
             </select>

@@ -11,7 +11,7 @@
 
 <div class="layout-split">
   <section class="table-wrap">
-    <table class="table">
+    <table class="table table--cards">
       <thead>
         <tr>
           <th scope="col">{{ t('auth.username') }}</th>
@@ -32,7 +32,7 @@
               {% if u.last_login_at %}<time datetime="{{ u.last_login_at }}" data-local-time>{{ u.last_login_at[:16] | replace('T', ' ') }}</time>{% else %}—{% endif %}
             </div>
           </td>
-          <td>
+          <td data-label="{{ t('admin.role') }}">
             <form method="post" action="{{ url_for('auth.update_user', user_id=u.id) }}" class="row">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="action" value="role">
@@ -43,11 +43,11 @@
               {% if not is_self %}<button type="submit" class="btn btn--sm">{{ t('admin.save') }}</button>{% endif %}
             </form>
           </td>
-          <td>
+          <td data-label="{{ t('admin.status') }}">
             <span class="badge badge--{{ 'success' if u.active else 'plain' }}">{{ t('admin.active') if u.active else t('admin.inactive') }}</span>
           </td>
-          <td class="num">{{ u.session_count }}</td>
-          <td>
+          <td class="num" data-label="{{ t('admin.sessions') }}">{{ u.session_count }}</td>
+          <td data-label="{{ t('admin.actions') }}">
             <div class="stack">
               {% if not is_self %}
               <form method="post" action="{{ url_for('auth.update_user', user_id=u.id) }}">

@@ -10,7 +10,7 @@
 </div>
 {% if entries %}
 <div class="table-wrap">
-  <table class="table">
+  <table class="table table--cards">
     <thead>
       <tr>
         <th scope="col">{{ t('admin.audit.time') }}</th>
@@ -24,10 +24,10 @@
       {% for e in entries %}
       <tr>
         <td class="small"><time datetime="{{ e.created_at }}" data-local-time>{{ e.created_at[:16] | replace('T', ' ') }}</time></td>
-        <td>{{ e.username or '—' }}</td>
-        <td><span class="badge badge--{{ 'danger' if e.action in ('login_failed', 'session_delete') else 'plain' }}">{{ t('audit.' ~ e.action) }}</span></td>
-        <td class="num">{{ e.session_id or '' }}</td>
-        <td class="small muted">{{ e.detail or '' }}</td>
+        <td data-label="{{ t('auth.username') }}">{{ e.username or '—' }}</td>
+        <td data-label="{{ t('admin.audit.action') }}"><span class="badge badge--{{ 'danger' if e.action in ('login_failed', 'session_delete') else 'plain' }}">{{ t('audit.' ~ e.action) }}</span></td>
+        <td class="num" data-label="{{ t('admin.audit.session') }}">{{ e.session_id or '' }}</td>
+        <td class="small muted" data-label="{{ t('admin.audit.detail') }}">{{ e.detail or '' }}</td>
       </tr>
       {% endfor %}
     </tbody>

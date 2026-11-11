@@ -68,9 +68,9 @@ def show(session_id: int, vacancy_id: int):
     db = storage.get_db()
     storage.audit_once(db, "ranking_open", g.user, session_id, f"vacancy={vacancy_id}")
     top = scoring.parse_top(request.args.get("top", str(scoring.TOP_CHOICES[1])))
-    status, query = _filters()
+    status, query, fit = _filters()
     candidates = scoring.ranking(db, vacancy_id)
-    shortlist = scoring.top_n(scoring.filter_candidates(candidates, status, query), top)
+    shortlist = scoring.top_n(scoring.filter_candidates(candidates, status, query, fit), top)
     progress = storage.progress(db, session_id)
 
     bias_report = json.loads(vacancy["bias_json"]) if vacancy["bias_json"] else None
@@ -89,7 +89,8 @@ def show(session_id: int, vacancy_id: int):
         status_counts=scoring.status_counts(candidates, storage.CANDIDATE_STATUSES),
         status_filter=status,
         query=query,
-        filter_args=_filter_args(top, status, query),
+        fit_filter=fit,
+        filter_args=_filter_args(top, status, query, fit),
         stats=scoring.summary_stats(candidates),
         top=top,
         top_choices=scoring.TOP_CHOICES,
@@ -100,18 +101,22 @@ def show(session_id: int, vacancy_id: int):
     )
 
 
-def _filters() -> tuple[str | None, str]:
-    """CR-01: ?status=shortlist and ?q=name narrow the ranking and the exports alike."""
+def _filters() -> tuple[str | None, str, bool]:
+    """CR-01: ?status=shortlist and ?q=name narrow the ranking and the exports alike;
+    S5: ?fit=1 keeps only suitable candidates (score >= 65), the "Подходят" tile."""
     return (scoring.parse_status(request.values.get("status"), storage.CANDIDATE_STATUSES),
-            request.values.get("q", "").strip()[:100])
+            request.values.get("q", "").strip()[:100],
+            request.values.get("fit") == "1")
 
 
-def _filter_args(top: int | None, status: str | None, query: str) -> dict[str, str]:
+def _filter_args(top: int | None, status: str | None, query: str, fit: bool = False) -> dict[str, str]:
     args = {"top": str(top) if top else "all"}
     if status:
         args["status"] = status
     if query:
         args["q"] = query
+    if fit:
+        args["fit"] = "1"
     return args
 
 
@@ -133,7 +138,7 @@ def set_status(session_id: int, vacancy_id: int, resume_id: int):
         return jsonify(status=status, label=translate(f"status.{status}"), message=translate("status.saved"))
     flash("status.saved", "success")
     back = {k: v for k, v in (("top", request.form.get("top")), ("status", request.form.get("filter_status")),
-                              ("q", request.form.get("q"))) if v}
+                              ("q", request.form.get("q")), ("fit", request.form.get("fit"))) if v}
     return redirect(url_for("vacancies.show", session_id=session_id, vacancy_id=vacancy_id, **back) + f"#c{resume_id}")
 
 
@@ -187,10 +192,10 @@ def _download(data: bytes, stem: str, ext: str, session_id: int, vacancy_id: int
 def _shortlist(session_id: int, vacancy_id: int):
     session, vacancy = _load(session_id, vacancy_id)
     top = scoring.parse_top(request.args.get("top"))
-    status, query = _filters()
+    status, query, fit = _filters()
     ranked = scoring.ranking(storage.get_db(), vacancy_id)
-    stem = _filename(session["title"], vacancy["title"], status or "", f"top{top}" if top else "all")
-    return session, vacancy, top, ranked, scoring.top_n(scoring.filter_candidates(ranked, status, query), top), stem
+    stem = _filename(session["title"], vacancy["title"], status or "", "fit" if fit else "", f"top{top}" if top else "all")
+    return session, vacancy, top, ranked, scoring.top_n(scoring.filter_candidates(ranked, status, query, fit), top), stem
 
 
 @bp.get("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/export.csv")

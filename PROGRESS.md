@@ -22,6 +22,7 @@
 | 16 | S2 registration switches, email, daily resume limit | done |
 | 17 | Public access: hrscreen.date via Cloudflare Tunnel | live from the owner's laptop; server move pending ([DEPLOY](docs/DEPLOY.md)) |
 | 18 | S3 example session for new users + delete a vacancy | done |
+| 20 | S5 user feedback: “Подходят” tile filter, mobile layout, score colours | done |
 | 19 | S4 (SIS 10-11): real client IP behind the tunnel, unique email, audit de-dup; CR-01 candidate pipeline | done |
 
 ## Done
@@ -194,6 +195,12 @@
   `TRUSTED_PROXIES` + `CF-Connecting-IP`; one account per email; ranking views logged
   once per 10 minutes. Client change request CR-01: candidate statuses with notes, status
   filter, name search, status/note in CSV/Excel/PDF. 29 new tests, 354 in total.
+
+- Phase 20 (S5, [spec](docs/specs/S5-mobile-and-fit-filter.md)): pilot users asked for a
+  clickable "Подходят" number, a usable phone layout and clearer score colours. The tile
+  now filters to score >= 65 (`fit=1`, also in exports); the top bar, session page and admin
+  tables fit a 390 px screen; the score bar fill was never visible (inline span) — fixed, and
+  the score is a coloured pill. 7 new tests, 361 in total.
 
 ## Next (backlog)
 - Move hosting off the laptop to an always-on server with `deploy/docker-compose.yml`
