@@ -153,6 +153,15 @@ Tests mock the AI provider, so they need no key and no `.env`:
 pytest -q                                          # macOS / Linux
 ```
 
+CI also runs lint, type and coverage checks. Run them locally before pushing:
+
+```bash
+ruff check .            # lint (security rules included)
+mypy                    # types for app/ and scripts/
+pytest -q --cov         # tests; fails if coverage of app/ drops below 90 %
+pre-commit install      # optional: run ruff and mypy on every commit
+```
+
 ## Configuration
 
 All settings come from environment variables (or `.env`, which is git-ignored).
@@ -193,6 +202,7 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 | Back up the database | `python scripts/backup_db.py [--out DIR] [--keep N]` |
 | Run (production) | `waitress-serve --host 0.0.0.0 --port 8000 --call app:create_server_app` |
 | Tests | `pytest -q` (Gemini is mocked, no key needed) |
+| Lint and types | `ruff check .` and `mypy` |
 | Smoke test | `python scripts/smoke_test.py [--pipeline \| --bias \| --list-models]` |
 | Regenerate samples | `python scripts/make_samples.py` |
 

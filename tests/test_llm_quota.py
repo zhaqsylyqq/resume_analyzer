@@ -7,7 +7,7 @@ from app import settings as app_settings
 from app.services import storage
 
 from .conftest import login, make_user
-from .helpers import VACANCY_TEXT, create_session
+from .helpers import create_session
 from .test_bias import BIASED, ai_service
 
 

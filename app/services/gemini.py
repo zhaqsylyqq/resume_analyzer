@@ -47,7 +47,7 @@ from pydantic import BaseModel, ValidationError
 
 from . import pii
 from .anonymize import scoring_view
-from .schemas import CandidateProfile, FitAssessment, ResumeFacts, ScoringResult, VacancyInput
+from .schemas import CandidateProfile, FitAssessment, ResumeFacts, ScoringResult, VacancyInput, Verdict
 
 log = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ def _retry_hint_seconds(exc: errors.APIError) -> float | None:
     return None
 
 
-def verdict_for(score: int) -> str:
+def verdict_for(score: int) -> Verdict:
     if score >= 85:
         return "strong"
     if score >= 65:
@@ -357,7 +357,7 @@ class GeminiService:
         delay = min(self.max_delay, self.base_delay * (2**attempt))
         if hint is not None:
             delay = max(delay, min(hint, self.max_delay))
-        return delay + random.uniform(0, delay * 0.25)
+        return delay + random.uniform(0, delay * 0.25)  # noqa: S311 - retry jitter, not security
 
     def _block(self, model: str, seconds: float) -> None:
         with self._breaker_lock:

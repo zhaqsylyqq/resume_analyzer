@@ -53,7 +53,7 @@ def is_running(session_id: int) -> bool:
 
 def start(session_id: int) -> bool:
     """Queue a session for analysis; returns False if it was already queued."""
-    app = current_app._get_current_object()
+    app = current_app._get_current_object()  # type: ignore[attr-defined]
     service = get_gemini()
     with _lock:
         added = session_id not in _rotation

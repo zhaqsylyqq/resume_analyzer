@@ -1,0 +1,20 @@
+# CI-04. Owners are asked for review automatically; with branch protection
+# "Require review from Code Owners" a change to these paths needs their approval.
+# Both developers own everything, so each reviews the other's PRs.
+
+*                       @zhaqsylyqq @karleone-don
+
+# Security-sensitive: auth, request hardening, personal-data redaction, AI prompts
+/app/auth.py            @zhaqsylyqq @karleone-don
+/app/security.py        @zhaqsylyqq @karleone-don
+/app/services/pii.py    @zhaqsylyqq @karleone-don
+/app/prompts/           @zhaqsylyqq @karleone-don
+
+# Supply chain and delivery
+/.github/               @zhaqsylyqq @karleone-don
+/Dockerfile             @zhaqsylyqq @karleone-don
+/requirements*.txt      @zhaqsylyqq @karleone-don
+/requirements*.lock     @zhaqsylyqq @karleone-don
+/ci/                    @zhaqsylyqq @karleone-don
+/scripts/backup_offsite.py  @zhaqsylyqq @karleone-don
+/scripts/restore_check.py   @zhaqsylyqq @karleone-don

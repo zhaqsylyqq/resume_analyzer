@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from flask import Blueprint, current_app, g, jsonify, request
 
 from ..auth import current_settings, is_admin
-
 from ..i18n import translate
 from ..services import jobs, storage
 from ..services.gemini import GeminiError
@@ -53,7 +53,8 @@ def upload(session_id: int):
         ), 400
 
     db = storage.get_db()
-    accepted, rejected = [], []
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
     remaining = remaining_today()
     for upload_file in files:
         data = upload_file.stream.read(cfg["MAX_FILE_BYTES"] + 1)

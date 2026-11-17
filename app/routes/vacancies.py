@@ -4,13 +4,15 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from urllib.parse import quote
 
 from flask import Blueprint, Response, abort, current_app, flash, g, jsonify, redirect, render_template, request, url_for
 
 from ..auth import current_settings, is_admin
 from ..i18n import get_locale, translate
-from ..services import bias, diversity, export as exporter, jobs, scoring, storage
+from ..services import bias, diversity, jobs, scoring, storage
+from ..services import export as exporter
 from ..services.gemini import GeminiError, get_gemini
 from .screening import start_analysis
 from .sessions import MAX_VACANCIES, MAX_VACANCY_TEXT, load_session_or_404, validate_vacancy
@@ -161,7 +163,7 @@ def set_status(session_id: int, vacancy_id: int, resume_id: int):
     if request.accept_mimetypes.best == "application/json":
         return jsonify(status=status, label=translate(f"status.{status}"), message=translate("status.saved"))
     flash("status.saved", "success")
-    back = {k: v for k, v in (("top", request.form.get("top")), ("status", request.form.get("filter_status")),
+    back: dict[str, Any] = {k: v for k, v in (("top", request.form.get("top")), ("status", request.form.get("filter_status")),
                               ("q", request.form.get("q")), ("fit", request.form.get("fit"))) if v}
     return redirect(url_for("vacancies.show", session_id=session_id, vacancy_id=vacancy_id, **back) + f"#c{resume_id}")
 

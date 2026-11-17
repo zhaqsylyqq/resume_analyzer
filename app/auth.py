@@ -21,20 +21,31 @@ from functools import wraps
 from typing import Any, Callable
 
 import click
-from flask.cli import with_appcontext
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from flask import (
-    Blueprint, Flask, Response, abort, current_app, flash, g, jsonify, redirect, render_template, request, session,
+    Blueprint,
+    Flask,
+    Response,
+    abort,
+    current_app,
+    flash,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
     url_for,
 )
+from flask.cli import with_appcontext
 
 from . import settings as app_settings
-from .starter import create_starter_session
 from .i18n import translate
 from .security import is_safe_redirect, is_trusted_proxy
 from .services import stats as usage_stats
 from .services import storage
+from .starter import create_starter_session
 
 bp = Blueprint("auth", __name__)
 

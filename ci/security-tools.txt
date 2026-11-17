@@ -1,0 +1,4 @@
+# Scanners for .github/workflows/security.yml (CI-02). Not installed in the app image.
+# After changing: uv pip compile ci/security-tools.txt --python-version 3.12 --python-platform x86_64-unknown-linux-gnu --generate-hashes -o ci/security-tools.lock
+semgrep==1.185.0
+pip-audit==2.10.1

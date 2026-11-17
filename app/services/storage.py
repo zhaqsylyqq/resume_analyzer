@@ -112,6 +112,13 @@ CREATE INDEX IF NOT EXISTS idx_scores_vacancy ON scores(vacancy_id, score DESC);
 """
 
 
+def _rowid(value: int | None) -> int:
+    """`cursor.lastrowid` after an INSERT; None would mean the insert did not happen."""
+    if value is None:
+        raise sqlite3.DatabaseError("INSERT returned no row id")
+    return int(value)
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -182,7 +189,7 @@ def create_session(
                 "INSERT INTO vacancies (session_id, title, text, created_at) VALUES (?, ?, ?, ?)",
                 (session_id, vacancy_title, text, stamp),
             )
-    return int(session_id)
+    return _rowid(session_id)
 
 
 def touch_session(db: sqlite3.Connection, session_id: int) -> None:
@@ -199,6 +206,7 @@ ALL_OWNERS = object()  # sentinel: no owner filter (admins)
 def list_sessions(db: sqlite3.Connection, limit: int = 100, owner_id: Any = ALL_OWNERS) -> list[sqlite3.Row]:
     """Newest first. `owner_id` limits the list to one user's sessions; admins pass ALL_OWNERS."""
     where, params = ("", ()) if owner_id is ALL_OWNERS else ("WHERE s.owner_id = ?", (owner_id,))
+    # `where` is one of two fixed literals; the owner id is bound.
     return db.execute(
         f"""
         SELECT s.*, u.username AS owner_name,
@@ -208,7 +216,7 @@ def list_sessions(db: sqlite3.Connection, limit: int = 100, owner_id: Any = ALL_
         FROM sessions s LEFT JOIN users u ON u.id = s.owner_id
         {where}
         ORDER BY s.updated_at DESC, s.id DESC LIMIT ?
-        """,
+        """,  # noqa: S608
         (*params, limit),
     ).fetchall()
 
@@ -234,7 +242,7 @@ def add_vacancy(db: sqlite3.Connection, session_id: int, title: str, text: str) 
             (session_id, title, text, now()),
         ).lastrowid
         touch_session(db, session_id)
-    return int(vacancy_id)
+    return _rowid(vacancy_id)
 
 
 def delete_vacancy(db: sqlite3.Connection, session_id: int, vacancy_id: int) -> bool:
@@ -282,7 +290,7 @@ def add_resume(
             touch_session(db, session_id)
     except sqlite3.IntegrityError:
         return None
-    return int(resume_id)
+    return _rowid(resume_id)
 
 
 def list_resumes(db: sqlite3.Connection, session_id: int) -> list[sqlite3.Row]:
@@ -446,7 +454,7 @@ def progress(db: sqlite3.Connection, session_id: int) -> dict[str, int]:
 def create_user(db: sqlite3.Connection, username: str, password_hash: str, role: str,
                 email: str | None = None) -> int:
     with db:
-        return int(db.execute(
+        return _rowid(db.execute(
             "INSERT INTO users (username, password_hash, role, created_at, email) VALUES (?, ?, ?, ?, ?)",
             (username, password_hash, role, now(), email or None),
         ).lastrowid)
@@ -552,7 +560,8 @@ def update_user(db: sqlite3.Connection, user_id: int, **fields: Any) -> None:
     if not items:
         return
     with db:
-        db.execute(f"UPDATE users SET {', '.join(f'{k} = ?' for k, _ in items)} WHERE id = ?",
+        # Column names come from the `allowed` set above, values are bound.
+        db.execute(f"UPDATE users SET {', '.join(f'{k} = ?' for k, _ in items)} WHERE id = ?",  # noqa: S608
                    (*[v for _, v in items], user_id))
 
 

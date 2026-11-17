@@ -1,0 +1,135 @@
+name: Security
+
+# CI-02. Report-only for the first two weeks: every scanner runs and publishes its
+# report, but a finding does not fail the build. After the review date in
+# docs/specs/CI-stage1.md, set REPORT_ONLY to "false" so findings block merges.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 2 * * 1"  # Mondays 02:17 UTC: new CVEs in unchanged dependencies
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REPORT_ONLY: "true"
+  TRIVY_VERSION: v0.76.1
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+jobs:
+  scan:
+    name: SAST, dependencies, secrets, config
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write  # upload SARIF to the Security tab
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # gitleaks scans the whole history
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install scanners (pinned, hash-checked)
+        run: pip install --require-hashes --no-deps -r ci/security-tools.lock
+      - run: mkdir -p reports
+
+      - name: Semgrep (SAST)
+        id: semgrep
+        continue-on-error: ${{ env.REPORT_ONLY == 'true' }}
+        env:
+          SEMGREP_SEND_METRICS: "off"
+        run: >
+          semgrep scan --metrics=off --error
+          --config p/python --config p/flask --config p/secrets
+          --sarif --output reports/semgrep.sarif app scripts
+
+      - name: pip-audit (known CVEs in locked dependencies)
+        id: pipaudit
+        continue-on-error: ${{ env.REPORT_ONLY == 'true' }}
+        run: |
+          pip-audit --disable-pip --require-hashes -r requirements.lock --format markdown --output reports/pip-audit.md
+          cat reports/pip-audit.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: gitleaks (secrets in git history)
+        id: gitleaks
+        continue-on-error: ${{ env.REPORT_ONLY == 'true' }}
+        run: |
+          curl -sSLo gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
+          tar xzf gitleaks.tgz gitleaks
+          ./gitleaks git --no-banner --redact --report-format sarif --report-path reports/gitleaks.sarif .
+
+      - name: Trivy (Dockerfile and config misconfigurations, secrets)
+        id: trivy
+        continue-on-error: ${{ env.REPORT_ONLY == 'true' }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: fs
+          scan-ref: .
+          scanners: misconfig,secret
+          skip-dirs: instance,.venv
+          format: sarif
+          output: reports/trivy-fs.sarif
+          exit-code: "1"
+          severity: MEDIUM,HIGH,CRITICAL
+
+      - name: Upload semgrep SARIF
+        # Fork PRs get a read-only token, so they skip the Security tab upload.
+        if: always() && hashFiles('reports/semgrep.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: reports/semgrep.sarif
+          category: semgrep
+
+      - name: Upload gitleaks SARIF
+        # Fork PRs get a read-only token, so they skip the Security tab upload.
+        if: always() && hashFiles('reports/gitleaks.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: reports/gitleaks.sarif
+          category: gitleaks
+
+      - name: Upload trivy-config SARIF
+        # Fork PRs get a read-only token, so they skip the Security tab upload.
+        if: always() && hashFiles('reports/trivy-fs.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: reports/trivy-fs.sarif
+          category: trivy-config
+
+      - name: Keep the raw reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-reports
+          path: reports/
+          retention-days: 30
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Security scan (report-only: ${REPORT_ONLY})"
+            echo "| Scanner | Result |"
+            echo "|---|---|"
+            echo "| Semgrep | ${{ steps.semgrep.outcome }} |"
+            echo "| pip-audit | ${{ steps.pipaudit.outcome }} |"
+            echo "| gitleaks | ${{ steps.gitleaks.outcome }} |"
+            echo "| Trivy config | ${{ steps.trivy.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

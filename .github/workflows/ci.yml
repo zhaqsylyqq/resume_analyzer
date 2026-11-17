@@ -7,15 +7,111 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  lint:
+    name: Lint and types
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
           cache: pip
       - run: pip install --require-hashes --no-deps -r requirements-dev.lock
-      - name: Run tests (Gemini is mocked; no API key needed)
-        run: pytest -q
+      - name: Ruff (lint)
+        run: ruff check --output-format=github .
+      - name: Mypy
+        run: mypy
+
+  test:
+    name: Tests and coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install --require-hashes --no-deps -r requirements-dev.lock
+      - name: Run tests (the AI provider is mocked; no API key needed)
+        run: pytest -q --cov --cov-report=term --cov-report=xml
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 14
+
+  image:
+    name: Container image (build, scan, SBOM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      IMAGE: hrscreen:ci-${{ github.sha }}
+      TRIVY_VERSION: v0.76.1
+      REPORT_ONLY: "true"  # CI-03: flip to "false" together with security.yml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build (not pushed; publishing comes with the CD stage)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            REVISION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test the image
+        run: |
+          docker run -d --name smoke -p 8000:8000 "$IMAGE"
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/healthz; then echo; break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8000/healthz
+          test "$(docker exec smoke id -u)" = "10001"
+          docker rm -f smoke
+      - name: Trivy image scan (fixed HIGH/CRITICAL)
+        id: trivy
+        continue-on-error: ${{ env.REPORT_ONLY == 'true' }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          image-ref: ${{ env.IMAGE }}
+          scanners: vuln
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: "1"
+      - name: SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          image-ref: ${{ env.IMAGE }}
+          scan-type: image
+          format: cyclonedx
+          output: sbom.cdx.json
+          skip-setup-trivy: true
+      - name: Keep the SBOM
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cdx.json
+          retention-days: 90

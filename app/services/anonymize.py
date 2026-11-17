@@ -94,6 +94,6 @@ def scoring_view(profile: CandidateProfile) -> dict[str, Any]:
             {"degree": clean(e.degree), "field": clean(e.field), "institution": clean(e.institution)}
             for e in profile.education
         ],
-        "languages": [{"language": clean(l.language), "level": clean(l.level)} for l in profile.languages],
+        "languages": [{"language": clean(lang.language), "level": clean(lang.level)} for lang in profile.languages],
         "certifications": clean_list(profile.certifications),
     }

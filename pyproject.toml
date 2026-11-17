@@ -8,3 +8,40 @@ requires-python = ">=3.11"
 testpaths = ["tests"]
 addopts = "-ra"
 filterwarnings = ["error::DeprecationWarning:app.*"]
+
+# CI-01: lint/type/coverage. Formatter is intentionally not enforced yet
+# (avoids churn while two people edit the same files).
+[tool.ruff]
+target-version = "py311"
+line-length = 130
+extend-exclude = ["instance", "legacy", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "S", "BLE"]
+ignore = [
+    "E501",  # long lines: checked by review, not CI, until the formatter is adopted
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S107", "S108", "S608"]
+# Every f-string fragment here comes from Period.where()/local_day(): a fixed column name
+# plus "?" placeholders, and an int offset. No user text reaches the SQL string.
+"app/services/stats.py" = ["S608"]
+"scripts/**" = ["S603", "S607"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["app", "scripts"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = false
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+skip_empty = true
+show_missing = false
+fail_under = 90

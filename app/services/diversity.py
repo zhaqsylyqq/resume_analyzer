@@ -42,12 +42,13 @@ def _load(db: sqlite3.Connection, resume_ids: Iterable[int]) -> dict[int, tuple[
     if not ids:
         return {}
     placeholders = ",".join("?" * len(ids))
+    # Only "?" placeholders are interpolated; ids are bound.
     rows = db.execute(
         f"""
         SELECT r.id AS resume_id, d.gender, d.age, json_extract(r.profile_json, '$.resume_language') AS language
         FROM resumes r LEFT JOIN demographics d ON d.resume_id = r.id
         WHERE r.id IN ({placeholders})
-        """,
+        """,  # noqa: S608
         ids,
     )
     return {
@@ -61,7 +62,7 @@ def _load(db: sqlite3.Connection, resume_ids: Iterable[int]) -> dict[int, tuple[
 
 
 def _dimension(keys: list[str], pool: list[str], shortlist: list[str]) -> dict[str, Any]:
-    groups = []
+    groups: list[dict[str, Any]] = []
     for key in keys + ["unknown"]:
         n_pool, n_short = pool.count(key), shortlist.count(key)
         rate = n_short / n_pool if n_pool else None

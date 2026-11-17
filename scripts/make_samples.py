@@ -184,7 +184,7 @@ def write_docx(path: Path, lines: list[str]) -> None:
     for line in lines[1:]:
         document.add_paragraph(line)
     document.core_properties.author = "synthetic"
-    document.save(path)
+    document.save(str(path))
 
 
 def write_pdf(path: Path, lines: list[str], font: str) -> None:
@@ -223,7 +223,7 @@ def main() -> None:
 
     for stem, fmt, _lang, lines in RESUMES:
         path = resumes_dir / f"{stem}.{fmt}"
-        {"txt": write_txt, "docx": write_docx}.get(fmt, lambda p, l: write_pdf(p, l, args.font))(path, lines)
+        {"txt": write_txt, "docx": write_docx}.get(fmt, lambda p, lines_: write_pdf(p, lines_, args.font))(path, lines)
 
     for name, text in VACANCIES.items():
         (ROOT / name).write_text(text + "\n", encoding="utf-8")

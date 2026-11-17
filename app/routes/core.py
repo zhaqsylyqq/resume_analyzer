@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request
 
-from ..i18n import LANG_COOKIE
 from ..auth import owner_filter
+from ..i18n import LANG_COOKIE
 from ..security import is_safe_redirect
 from ..services import storage
 
@@ -19,7 +19,7 @@ def index():
 @bp.get("/lang/<code>")
 def set_language(code: str):
     target = request.args.get("next")
-    response = redirect(target if is_safe_redirect(target) else "/")
+    response = redirect(target if target and is_safe_redirect(target) else "/")
     if code in current_app.config["LANGUAGES"]:
         response.set_cookie(LANG_COOKIE, code, max_age=365 * 24 * 3600, samesite="Lax", httponly=True)
     return response

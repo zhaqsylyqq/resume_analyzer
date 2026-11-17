@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app import create_app
-from app import retention
+from app import create_app, retention
 from app.services import jobs, storage
 
 from .helpers import VACANCY_TEXT

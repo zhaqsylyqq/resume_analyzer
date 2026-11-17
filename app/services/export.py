@@ -140,7 +140,7 @@ def to_xlsx(session_title: str, sheets: list[VacancySheet], t: Translate) -> byt
     summary.append([t("xlsx.note")])
     for row in summary.iter_rows():
         _set_text_types(row)
-    for col, width in zip("ABCDEF", (40, 14, 12, 12, 12, 16)):
+    for col, width in zip("ABCDEF", (40, 14, 12, 12, 12, 16), strict=True):
         summary.column_dimensions[col].width = width
 
     buffer = io.BytesIO()
@@ -151,7 +151,7 @@ def to_xlsx(session_title: str, sheets: list[VacancySheet], t: Translate) -> byt
 class _Report(FPDF):
     """A4 report; every multi_cell returns to the left margin on the next line."""
 
-    def multi_cell(self, w, h=None, text="", **kwargs):  # type: ignore[override]
+    def multi_cell(self, w, h=None, text="", **kwargs):
         kwargs.setdefault("new_x", XPos.LMARGIN)
         kwargs.setdefault("new_y", YPos.NEXT)
         return super().multi_cell(w, h, text, **kwargs)
@@ -211,7 +211,7 @@ def to_pdf(session_title: str, vacancy_title: str, candidates: list[RankedCandid
     for i, c in enumerate(candidates):
         pdf.set_fill_color(*((247, 245, 239) if i % 2 == 0 else (255, 255, 255)))
         values = (c.rank, c.name or c.filename, c.score, t(f"verdict.{c.verdict}"), c.headline or "")
-        for (_, w), value in zip(cols, values):
+        for (_, w), value in zip(cols, values, strict=True):
             text = _pdf_text(value)
             while text and pdf.get_string_width(text) > w - 2:
                 text = text[:-2] + "…"

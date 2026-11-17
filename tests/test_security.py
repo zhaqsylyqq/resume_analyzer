@@ -86,8 +86,8 @@ def test_request_scheme_and_external_urls_follow_the_trusted_proxy(app):
 
     app.register_blueprint(bp)
     app.config["TRUSTED_PROXIES"] = ("127.0.0.1",)
-    from app.auth import PUBLIC_ENDPOINTS  # the probe is outside login: call it as a public endpoint
     import app.auth as auth
+    from app.auth import PUBLIC_ENDPOINTS  # the probe is outside login: call it as a public endpoint
     auth.PUBLIC_ENDPOINTS = PUBLIC_ENDPOINTS | {"scheme_probe.scheme"}
     try:
         c = app.test_client()

@@ -7,7 +7,6 @@ from typing import Any
 from flask import Blueprint, abort, current_app, g, jsonify, redirect, render_template, request, url_for
 
 from ..auth import can_access, owner_filter
-
 from ..i18n import get_locale, translate
 from ..services import bias, jobs, storage
 
@@ -73,7 +72,7 @@ def create():
     language = request.form.get("language", get_locale())
     titles = [t.strip() for t in request.form.getlist("vacancy_title")]
     texts = [t.strip() for t in request.form.getlist("vacancy_text")]
-    vacancies = [(t, x) for t, x in zip(titles, texts) if t or x]
+    vacancies = [(t, x) for t, x in zip(titles, texts, strict=False) if t or x]
 
     errors: dict[str, Any] = {}
     if not title or len(title) > MAX_TITLE:

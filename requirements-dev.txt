@@ -2,3 +2,6 @@
 # After changing this file run: uv pip compile requirements-dev.txt --universal --python-version 3.12 --generate-hashes -o requirements-dev.lock
 -r requirements.txt
 pytest>=9.1,<10
+pytest-cov>=7,<8
+ruff==0.17.5
+mypy>=2.4,<3

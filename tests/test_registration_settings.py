@@ -5,7 +5,7 @@ import pytest
 
 from app import settings as app_settings
 from app.auth import SignupLimiter
-from app.services import stats, storage
+from app.services import storage
 
 from .conftest import login, make_user
 from .helpers import create_session, resume_text, upload

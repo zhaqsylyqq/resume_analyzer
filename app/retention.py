@@ -52,7 +52,7 @@ def _run(app: Flask) -> None:
 
 
 def _maybe_run() -> None:
-    app = current_app._get_current_object()
+    app = current_app._get_current_object()  # type: ignore[attr-defined]
     last = app.extensions.get("retention_last_run", 0.0)
     if time.monotonic() - last < RUN_INTERVAL or not _lock.acquire(blocking=False):
         return
