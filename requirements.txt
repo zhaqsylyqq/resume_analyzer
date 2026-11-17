@@ -1,3 +1,5 @@
+# Runtime dependencies (ranges). Pinned versions with hashes: requirements.lock (QW-03).
+# After changing this file run: uv pip compile requirements.txt --universal --python-version 3.12 --generate-hashes -o requirements.lock
 Flask>=3.1,<4
 google-genai>=2.25,<3
 openai>=3.48,<4
@@ -5,8 +7,8 @@ pydantic>=2.13,<3
 python-dotenv>=1.2,<2
 pypdf>=6.19,<7
 python-docx>=1.2,<2
-pytest>=9.1,<10
 waitress>=3.0,<4
 openpyxl>=3.1,<4
 fpdf2>=2.8,<3
 argon2-cffi>=23.1,<26
+cryptography>=45,<51

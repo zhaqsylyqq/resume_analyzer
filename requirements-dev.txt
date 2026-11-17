@@ -1,1 +1,4 @@
+# Development and test dependencies. Pinned versions with hashes: requirements-dev.lock (QW-03).
+# After changing this file run: uv pip compile requirements-dev.txt --universal --python-version 3.12 --generate-hashes -o requirements-dev.lock
 -r requirements.txt
+pytest>=9.1,<10

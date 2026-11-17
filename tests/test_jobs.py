@@ -56,3 +56,50 @@ def test_vacancy_added_during_scoring_is_scored_for_that_resume(app, client, csr
     upload(client, csrf, session_id, [("a.txt", resume_text(1))])
     with app.app_context():
         assert storage.get_db().execute("SELECT COUNT(*) FROM scores").fetchone()[0] == 2
+
+
+# QW-05: analysis interrupted by a restart continues on its own ------------------------------
+
+def test_restart_resumes_pending_analysis(app, fake_gemini):
+    from app import create_app
+
+    with app.app_context():
+        db = storage.get_db()
+        sid = storage.create_session(db, "До перезапуска", "ru", [("v", VACANCY_TEXT)])
+        storage.add_resume(db, sid, "a.txt", "h-a", resume_text(1).decode(), storage.PENDING)
+        rid = storage.add_resume(db, sid, "b.txt", "h-b", resume_text(2).decode(), storage.PENDING)
+        db.execute("UPDATE resumes SET status = ? WHERE id = ?", (storage.PROCESSING, rid))  # cut off mid-analysis
+        db.commit()
+
+    restarted = create_app({"TESTING": True, "SECRET_KEY": "x", "DATABASE": app.config["DATABASE"], "SYNC_JOBS": True,
+                            "LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "k", "GEMINI_MODEL": "m"})
+    restarted.extensions["gemini"] = fake_gemini
+    assert jobs.resume_pending(restarted) == [sid]
+    with restarted.app_context():
+        assert storage.progress(storage.get_db(), sid)["done"] == 2
+
+
+def test_resume_pending_without_ai_key_keeps_resumes_waiting(app):
+    app.config.update(LLM_PROVIDER="gemini", GEMINI_API_KEY="")
+    app.extensions.pop("gemini", None)
+    with app.app_context():
+        db = storage.get_db()
+        sid = storage.create_session(db, "Без ключа", "ru", [("v", VACANCY_TEXT)])
+        storage.add_resume(db, sid, "a.txt", "h-a", resume_text(1).decode(), storage.PENDING)
+    assert jobs.resume_pending(app) == []
+    with app.app_context():
+        assert storage.progress(storage.get_db(), sid)["pending"] == 1
+
+
+def test_resume_pending_with_empty_queue_does_nothing(app):
+    assert jobs.resume_pending(app) == []
+
+
+def test_server_entry_point_resumes_the_queue(app, monkeypatch):
+    import app as package
+
+    called = []
+    monkeypatch.setattr(package, "create_app", lambda: app)  # never touch the real instance/app.db
+    monkeypatch.setattr(jobs, "resume_pending", lambda a: called.append(a) or [])
+    assert package.create_server_app() is app
+    assert called == [app]

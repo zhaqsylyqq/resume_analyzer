@@ -67,6 +67,29 @@ def start(session_id: int) -> bool:
     return added
 
 
+def resume_pending(app: Flask) -> list[int]:
+    """QW-05: queue every session that still has pending resumes; returns their ids.
+
+    Called once when the server starts. A restart moves resumes that were being analyzed back
+    to pending (storage.init_db); without this they would wait until the user clicked
+    "analyze" again. When the AI provider is not configured nothing is queued and the
+    server still starts.
+    """
+    with app.app_context():
+        session_ids = storage.sessions_with_pending(storage.get_db())
+        if not session_ids:
+            return []
+        try:
+            get_gemini()
+        except GeminiError as exc:
+            log.warning("Pending resumes not resumed: %s", exc)
+            return []
+        for session_id in session_ids:
+            start(session_id)
+    log.info("Resumed analysis for %d session(s) after start", len(session_ids))
+    return session_ids
+
+
 def _spawn_workers(app: Flask, service: GeminiService) -> None:
     global _workers
     with _lock:

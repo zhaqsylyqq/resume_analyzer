@@ -24,6 +24,7 @@
 | 18 | S3 example session for new users + delete a vacancy | done |
 | 20 | S5 user feedback: “Подходят” tile filter, mobile layout, score colours | done |
 | 19 | S4 (SIS 10-11): real client IP behind the tunnel, unique email, audit de-dup; CR-01 candidate pipeline | done |
+| 21 | Enterprise roadmap, stage 0 (QW-01…QW-06): offsite backup, AI check quota, locked dependencies, HTTPS behind the proxy, queue resume, repository hygiene ([spec](docs/specs/QW-stage0.md)) | done in code; owner steps in the spec |
 
 ## Done
 - Phase 0: app factory, env-based config, CSRF + security headers, RU/KK i18n, design system

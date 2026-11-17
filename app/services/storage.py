@@ -98,6 +98,13 @@ CREATE TABLE IF NOT EXISTS candidate_status (
     updated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
     PRIMARY KEY (vacancy_id, resume_id)
 );
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id          INTEGER PRIMARY KEY,
+    user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    kind        TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_user ON llm_usage(user_id, kind, created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_vacancies_session ON vacancies(session_id);
 CREATE INDEX IF NOT EXISTS idx_resumes_session_status ON resumes(session_id, status);
@@ -315,6 +322,12 @@ def claim_pending(db: sqlite3.Connection, session_id: int, limit: int = 1000) ->
     return ids
 
 
+def sessions_with_pending(db: sqlite3.Connection) -> list[int]:
+    """QW-05: sessions that still have resumes waiting for analysis (oldest session first)."""
+    return [row["session_id"] for row in db.execute(
+        "SELECT DISTINCT session_id FROM resumes WHERE status = ? ORDER BY session_id", (PENDING,))]
+
+
 def average_analysis_seconds(db: sqlite3.Connection, sample: int = 20) -> float | None:
     """Mean analysis time of the last `sample` finished resumes in any session (Q1)."""
     row = db.execute(
@@ -401,7 +414,7 @@ def save_scores(db: sqlite3.Connection, resume_id: int, assessments: Iterable[Fi
         # A vacancy deleted while this resume was being scored is skipped (no FK error).
         db.executemany(
             """INSERT OR REPLACE INTO scores (resume_id, vacancy_id, score, verdict, summary, details_json, created_at)
-               SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM vacancies WHERE id = ?2)""",
+               SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM vacancies WHERE id = ?)""",
             [
                 (
                     resume_id,
@@ -411,6 +424,7 @@ def save_scores(db: sqlite3.Connection, resume_id: int, assessments: Iterable[Fi
                     a.summary,
                     json.dumps(a.model_dump(exclude={"vacancy_id", "score", "verdict", "summary"}), ensure_ascii=False),
                     stamp,
+                    a.vacancy_id,  # for the EXISTS check (plain '?': numbered '?2' is deprecated with a sequence)
                 )
                 for a in assessments
             ],
@@ -460,6 +474,22 @@ def resumes_added_since(db: sqlite3.Connection, owner_id: int, since_iso: str) -
         WHERE s.owner_id = ? AND r.created_at >= ? AND r.status != ?
         """,
         (owner_id, since_iso, PARSE_FAILED),
+    ).fetchone()[0])
+
+
+# AI calls outside resume analysis (QW-02) ------------------------------------------------
+
+AI_BIAS_CHECK = "bias_check"
+
+
+def record_llm_use(db: sqlite3.Connection, user_id: int | None, kind: str) -> None:
+    with db:
+        db.execute("INSERT INTO llm_usage (user_id, kind, created_at) VALUES (?, ?, ?)", (user_id, kind, now()))
+
+
+def llm_uses_since(db: sqlite3.Connection, user_id: int, kind: str, since_iso: str) -> int:
+    return int(db.execute(
+        "SELECT COUNT(*) FROM llm_usage WHERE user_id = ? AND kind = ? AND created_at >= ?", (user_id, kind, since_iso)
     ).fetchone()[0])
 
 

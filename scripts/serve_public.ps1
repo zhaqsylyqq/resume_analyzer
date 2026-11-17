@@ -40,7 +40,7 @@ if (-not $env:TUNNEL_TOKEN) {
 
 $env:SESSION_COOKIE_SECURE = "1"
 $app = Start-Process -FilePath $waitress -WorkingDirectory $root -NoNewWindow -PassThru `
-    -ArgumentList "--host=127.0.0.1", "--port=$Port", "--threads=8", "--call", "app:create_app"
+    -ArgumentList "--host=127.0.0.1", "--port=$Port", "--threads=8", "--call", "app:create_server_app"
 Write-Host "App started on http://127.0.0.1:$Port (pid $($app.Id)); starting tunnel '$Tunnel'..."
 try {
     if ($env:TUNNEL_TOKEN) {

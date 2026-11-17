@@ -4,8 +4,8 @@ An HR tool that screens many resumes at once against one or more vacancies and r
 ranked Top-N shortlist — with fairness built in: demographics are stripped before scoring,
 vacancy texts are checked for biased wording, and shortlists get aggregate diversity metrics.
 
-Rebuilt from the Enbek prototype (single-person career advice form); the original code is
-kept read-only in [`legacy/`](legacy/).
+Rebuilt from the Enbek prototype (single-person career advice form); the prototype code was
+removed from the tree and stays in the git history (before commit `4466bb2`).
 
 > **Команде:** что сделать на сервере после обновления и как собрать пользователей для
 > зачёта — в [`TEAMMATE.md`](TEAMMATE.md) (на русском).
@@ -54,14 +54,18 @@ cd resume_analyzer
 **Windows (PowerShell)**
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install --require-hashes --no-deps -r requirements-dev.lock
 ```
 
 **macOS / Linux**
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes --no-deps -r requirements-dev.lock
 ```
+
+`requirements.lock` (server) and `requirements-dev.lock` (development and tests) pin every
+package with its hash. After changing `requirements.txt` or `requirements-dev.txt`, regenerate
+both with `uv pip compile <file> --universal --python-version 3.12 --generate-hashes -o <lock>`.
 
 ### 3. Add your API key
 
@@ -168,9 +172,12 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 | `SESSION_COOKIE_SECURE` | `0` | Set to `1` when served over HTTPS |
 | `INVITE_CODE` | empty | Initial invite code; until an admin saves the registration settings, a non-empty code opens sign-up with this code |
 | `DAILY_RESUME_LIMIT` | `30` | Initial limit of resumes per recruiter per 24 hours (0 = none); admins change it in the app |
+| `DAILY_AI_CHECK_LIMIT` | `20` | Initial limit of AI vacancy checks per recruiter per 24 hours (0 = none); the dictionary check always runs; admins change it in the app |
+| `BACKUP_OFFSITE_DIR` | empty | Folder outside this disk for encrypted backups (`scripts/backup_offsite.py`) |
+| `BACKUP_KEY` | empty | Key for encrypted backups; create with `python scripts/backup_offsite.py --generate-key` |
 | `STATS_UTC_OFFSET` | `5` | Hours added to UTC when statistics group events by day (Kazakhstan: 5) |
 | `STARTER_SESSION` | `1` | Give every new user an example session with a Python vacancy (`0` = off) |
-| `TRUSTED_PROXIES` | `127.0.0.1,::1` | Peers allowed to pass the visitor IP (`CF-Connecting-IP` / `X-Forwarded-For`); needed for rate limits behind Cloudflare Tunnel |
+| `TRUSTED_PROXIES` | `127.0.0.1,::1` | Peers allowed to pass the visitor IP (`CF-Connecting-IP` / `X-Forwarded-For`) and the scheme (`X-Forwarded-Proto`); needed for rate limits and HSTS behind Cloudflare Tunnel |
 | `RETENTION_DAYS` | `90` | Sessions not changed for this many days are deleted with all their data; `0` keeps everything |
 
 `python scripts/smoke_test.py --list-models` lists the models your key can use.
@@ -183,10 +190,10 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 | Create an admin | `flask --app app create-admin` |
 | Delete old sessions now | `flask --app app purge-old [--days N]` |
 | Back up the database | `python scripts/backup_db.py [--out DIR] [--keep N]` |
-| Run (production) | `waitress-serve --host 0.0.0.0 --port 8000 --call app:create_app` |
+| Run (production) | `waitress-serve --host 0.0.0.0 --port 8000 --call app:create_server_app` |
 | Tests | `pytest -q` (Gemini is mocked, no key needed) |
 | Smoke test | `python scripts/smoke_test.py [--pipeline \| --bias \| --list-models]` |
-| Regenerate samples | `pip install -r requirements-dev.txt && python scripts/make_samples.py` |
+| Regenerate samples | `python scripts/make_samples.py` |
 
 ## API usage (keeping the AI bill small)
 
@@ -224,7 +231,23 @@ online backup API, safe while the app is running), checks it and keeps the newes
 another disk or cloud folder as well; a backup on the same disk does not survive a disk
 failure. To restore, stop the app and copy a backup over `instance/app.db`.
 
-Schedule it daily:
+**Encrypted copy outside the computer (QW-01).** `scripts/backup_offsite.py` makes the same
+consistent snapshot, encrypts it (AES-256-GCM, key `BACKUP_KEY`) and writes it to
+`BACKUP_OFFSITE_DIR` — a USB drive, a NAS or a synced folder of a storage provider that keeps
+data in Kazakhstan (resumes are personal data: no foreign cloud drives). It keeps the newest
+30 copies. `scripts/restore_check.py` decrypts the newest copy into a temporary file, checks
+it and prints the row counts; `--restore-to PATH` writes the restored database.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\backup_offsite.py --generate-key   # once; put it into .env as BACKUP_KEY
+.\.venv\Scripts\python.exe scripts\backup_offsite.py                  # BACKUP_OFFSITE_DIR from .env
+.\.venv\Scripts\python.exe scripts\restore_check.py
+powershell -ExecutionPolicy Bypass -File scripts\register_backup_task.ps1   # daily at 03:00, both scripts
+```
+
+Store `BACKUP_KEY` in a password manager with two people: without it no copy can be read.
+
+Schedule the plain local backup daily:
 
 - **Windows** (Task Scheduler, once, in PowerShell from the project folder):
   ```powershell
@@ -319,7 +342,7 @@ issues in [`PROGRESS.md`](PROGRESS.md).
 
 ```
 app/
-  __init__.py          create_app(), error handlers
+  __init__.py          create_app(), create_server_app() (resumes the queue), error handlers
   config.py  i18n.py  security.py
   routes/              core.py, sessions.py, screening.py, vacancies.py
   services/            parsing, gemini (AI engine + Gemini backend), openai_compat (DeepSeek
@@ -328,9 +351,9 @@ app/
   templates/  static/
 docs/specs/            one spec per feature
 samples/               synthetic RU/KK resumes, vacancies and bad files
-scripts/               smoke_test.py, make_samples.py
+scripts/               smoke_test.py, make_samples.py, backup_db.py, backup_offsite.py,
+                       restore_check.py, register_backup_task.ps1, serve_public.ps1
 tests/                 pytest suite (AI provider mocked)
-legacy/                original Enbek prototype, read-only
 ```
 
 ## Troubleshooting

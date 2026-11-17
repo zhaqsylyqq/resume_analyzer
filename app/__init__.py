@@ -43,6 +43,19 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
     return app
 
 
+def create_server_app() -> Flask:
+    """Entry point for the web server (waitress `--call app:create_server_app`).
+
+    Same as create_app(), plus QW-05: analysis interrupted by a restart continues on its own.
+    CLI commands (`flask --app app ...`) keep using create_app() and never start workers.
+    """
+    from .services import jobs
+
+    app = create_app()
+    jobs.resume_pending(app)
+    return app
+
+
 def _register_blueprints(app: Flask) -> None:
     from .routes.core import bp as core_bp
     from .routes.screening import bp as screening_bp

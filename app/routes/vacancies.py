@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from flask import Blueprint, Response, abort, current_app, flash, g, jsonify, redirect, render_template, request, url_for
 
+from ..auth import current_settings, is_admin
 from ..i18n import get_locale, translate
 from ..services import bias, diversity, export as exporter, jobs, scoring, storage
 from ..services.gemini import GeminiError, get_gemini
@@ -29,6 +31,28 @@ def _gemini_or_none():
         return get_gemini()
     except GeminiError:
         return None
+
+
+def ai_checks_left() -> int | None:
+    """QW-02: AI vacancy checks the signed-in recruiter may still run in the last 24 h; None = unlimited."""
+    limit = current_settings().ai_check_limit
+    if is_admin() or limit <= 0:
+        return None
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds")
+    used = storage.llm_uses_since(storage.get_db(), g.user["id"], storage.AI_BIAS_CHECK, since)
+    return max(0, limit - used)
+
+
+def _bias_check(text: str, language: str, want_ai: bool = True) -> tuple[dict, bool]:
+    """Run the bias check; the AI pass only while the daily quota allows it.
+    Returns the report and whether the quota stopped the AI pass."""
+    left = ai_checks_left() if want_ai else None
+    limited = want_ai and left is not None and left <= 0
+    service = _gemini_or_none() if want_ai and not limited else None
+    report = bias.check(text, language, service)
+    if report["ai_checked"]:
+        storage.record_llm_use(storage.get_db(), g.user["id"], storage.AI_BIAS_CHECK)
+    return report, limited
 
 
 @bp.post("/sessions/<int:session_id>/vacancies")
@@ -145,10 +169,12 @@ def set_status(session_id: int, vacancy_id: int, resume_id: int):
 @bp.post("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/bias")
 def recheck_bias(session_id: int, vacancy_id: int):
     session, vacancy = _load(session_id, vacancy_id)
-    service = _gemini_or_none()
-    report = bias.check(vacancy["text"], session["language"], service)
+    report, limited = _bias_check(vacancy["text"], session["language"])
     storage.save_bias_report(storage.get_db(), vacancy_id, report)
-    flash("bias.ai_done" if report["ai_checked"] else "bias.ai_unavailable", "success" if report["ai_checked"] else "warning")
+    if limited:
+        flash("bias.ai_limit", "warning")
+    else:
+        flash("bias.ai_done" if report["ai_checked"] else "bias.ai_unavailable", "success" if report["ai_checked"] else "warning")
     top = request.form.get("top", "")
     return redirect(url_for("vacancies.show", session_id=session_id, vacancy_id=vacancy_id, top=top or None) + "#bias")
 
@@ -161,8 +187,12 @@ def bias_check():
     language = payload.get("language") if payload.get("language") in current_app.config["LANGUAGES"] else get_locale()
     if len(text) < 10:
         return jsonify(error="too_short", message=translate("form.error.vacancy_text")), 400
-    report = bias.check(text, language, _gemini_or_none() if payload.get("ai", True) else None)
-    return jsonify(bias.localize(report, translate))
+    report, limited = _bias_check(text, language, want_ai=bool(payload.get("ai", True)))
+    body = bias.localize(report, translate)
+    if limited:
+        body["ai_limited"] = True
+        body["message"] = translate("bias.ai_limit")
+    return jsonify(body)
 
 
 MIMETYPES = {

@@ -36,10 +36,10 @@
 
 ```bash
 git pull
-pip install -r requirements.txt        # появились argon2-cffi, openpyxl, fpdf2
+pip install --require-hashes --no-deps -r requirements-dev.lock   # точные версии с хэшами
 ```
 
-(На Windows: `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`.)
+(На Windows: `.\.venv\Scripts\python.exe -m pip install --require-hashes --no-deps -r requirements-dev.lock`.)
 
 ## 2. Проверить `.env`
 

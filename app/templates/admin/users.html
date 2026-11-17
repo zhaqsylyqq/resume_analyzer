@@ -103,6 +103,12 @@
                  value="{{ settings.daily_limit }}" {% if settings_errors.daily_limit %}aria-invalid="true" aria-describedby="daily-limit-error"{% endif %}>
           {% if settings_errors.daily_limit %}<span class="field-error" id="daily-limit-error">{{ t(settings_errors.daily_limit) }}</span>{% else %}<span class="hint">{{ t('settings.daily_limit.hint') }}</span>{% endif %}
         </div>
+        <div class="field">
+          <label class="label" for="ai-check-limit">{{ t('settings.ai_check_limit') }}</label>
+          <input class="input" id="ai-check-limit" name="ai_check_limit" type="number" min="0" max="10000" step="1"
+                 value="{{ settings.ai_check_limit }}" {% if settings_errors.ai_check_limit %}aria-invalid="true" aria-describedby="ai-check-limit-error"{% endif %}>
+          {% if settings_errors.ai_check_limit %}<span class="field-error" id="ai-check-limit-error">{{ t(settings_errors.ai_check_limit) }}</span>{% else %}<span class="hint">{{ t('settings.ai_check_limit.hint') }}</span>{% endif %}
+        </div>
         <button type="submit" class="btn btn--primary btn--block">{{ t('admin.save') }}</button>
       </form>
     </section>

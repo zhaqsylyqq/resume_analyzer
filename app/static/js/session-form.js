@@ -74,7 +74,7 @@
       });
       box.appendChild(list);
     }
-    if (!report.ai_checked) box.appendChild(el("p", "hint mt-2", form.dataset.msgRulesOnly));
+    if (!report.ai_checked) box.appendChild(el("p", "hint mt-2", report.ai_limited ? report.message : form.dataset.msgRulesOnly));
     box.hidden = false;
   }
 

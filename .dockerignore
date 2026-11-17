@@ -13,7 +13,6 @@ __pycache__
 .idea
 .claude
 CLAUDE.md
-legacy
 tests
 samples
 docs

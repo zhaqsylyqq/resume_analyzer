@@ -10,7 +10,7 @@ stay the same.
 | Piece | State |
 |---|---|
 | Domain | `hrscreen.date`, registered at Cloudflare Registrar in the owner's Cloudflare account; DNS on Cloudflare |
-| Tunnel | Named tunnel `hrscreen` (id `c256e54f-7d99-466c-a77b-27e0f52fcc53`); the DNS record `hrscreen.date` is a CNAME to it |
+| Tunnel | Named tunnel `hrscreen`; the DNS record `hrscreen.date` points to it (the tunnel id is in the owner's Cloudflare dashboard, not in this public repository) |
 | AI | DeepSeek (`LLM_PROVIDER=deepseek`, `deepseek-flash`), prepaid balance of about $5; about $0.001 per resume |
 | Sign-in | Personal accounts with roles (A1, `app/auth.py`). Admins open registration with an invite code on the users page (see [`TEAMMATE.md`](../TEAMMATE.md)) |
 | Cloudflare Access | Not used (the app's own login covers it) |
@@ -69,8 +69,9 @@ Members) to manage DNS and the tunnel directly.
 7. Sign in on https://hrscreen.date, screen a few sample resumes, then
    `docker compose -f deploy/docker-compose.yml restart` and confirm the sessions are
    still there.
-8. Schedule `scripts/backup_db.py` daily inside the app container (README, "Data
-   retention and backups").
+8. Schedule the encrypted offsite backup daily: `scripts/backup_offsite.py` with
+   `BACKUP_OFFSITE_DIR` on storage outside the server that keeps data in Kazakhstan, and
+   `scripts/restore_check.py` after it (README, "Data retention and backups").
 
 ## Done when
 

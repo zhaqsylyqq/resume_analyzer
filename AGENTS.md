@@ -47,7 +47,7 @@ Python 3.11+. On Windows use the venv executables directly.
 
 | Task | Windows (PowerShell) | macOS / Linux |
 |------|----------------------|---------------|
-| Install | `python -m venv .venv` then `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` | `python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt` |
+| Install | `python -m venv .venv` then `.\.venv\Scripts\python.exe -m pip install --require-hashes --no-deps -r requirements-dev.lock` | `python3 -m venv .venv && . .venv/bin/activate && pip install --require-hashes --no-deps -r requirements-dev.lock` |
 | Tests | `.\.venv\Scripts\python.exe -m pytest -q` | `pytest -q` |
 | Run (dev) | `.\.venv\Scripts\flask.exe --app app run --debug` | `flask --app app run --debug` |
 | Real-API check | `.\.venv\Scripts\python.exe scripts\smoke_test.py` | `python scripts/smoke_test.py` |
@@ -121,7 +121,6 @@ app/
 docs/specs/            one spec per feature
 scripts/               smoke_test.py, make_samples.py, backup_db.py
 tests/                 pytest suite; tests/fakes.py holds the fake Gemini client
-legacy/                original Enbek prototype, read-only; never import from it
 ```
 
 ## How to work

@@ -36,6 +36,8 @@ def settings_from_env() -> dict[str, Any]:
         "INVITE_CODE": os.environ.get("INVITE_CODE", "").strip(),
         # S2: default daily resume limit per recruiter until an admin saves another (0 = none)
         "DAILY_RESUME_LIMIT": max(0, _int_env("DAILY_RESUME_LIMIT", 30)),
+        # QW-02: default daily AI vacancy checks per recruiter until an admin saves another (0 = none)
+        "DAILY_AI_CHECK_LIMIT": max(0, _int_env("DAILY_AI_CHECK_LIMIT", 20)),
         # S3: give every new user an example session with a Python vacancy
         "STARTER_SESSION": os.environ.get("STARTER_SESSION", "1") != "0",
         # S1: hours added to UTC when statistics group events by day (Kazakhstan: +5)

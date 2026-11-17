@@ -32,7 +32,7 @@ from flask import (
 from . import settings as app_settings
 from .starter import create_starter_session
 from .i18n import translate
-from .security import is_safe_redirect
+from .security import is_safe_redirect, is_trusted_proxy
 from .services import stats as usage_stats
 from .services import storage
 
@@ -236,18 +236,7 @@ def _valid_ip(value: str | None) -> str | None:
 
 
 def _trusted(peer: str, proxies: tuple[str, ...]) -> bool:
-    """Peer matches an address or a network (e.g. 172.16.0.0/12 for a Docker network)."""
-    try:
-        address = ipaddress.ip_address(peer)
-    except ValueError:
-        return False
-    for entry in proxies:
-        try:
-            if address in ipaddress.ip_network(entry, strict=False):
-                return True
-        except ValueError:
-            continue
-    return False
+    return is_trusted_proxy(peer, proxies)
 
 
 def client_ip() -> str:
@@ -429,18 +418,14 @@ def update_settings():
     """S2: registration switches, invite code and daily resume limit."""
     code = request.form.get("invite_code", "").strip()
     errors = {}
-    try:
-        limit = int(request.form.get("daily_limit", "").strip())
-        if not 0 <= limit <= app_settings.MAX_LIMIT:
-            raise ValueError
-    except ValueError:
-        errors["daily_limit"] = "settings.error.limit"
-        limit = current_settings().daily_limit
+    limit = _limit_field("daily_limit", current_settings().daily_limit, errors)
+    ai_limit = _limit_field("ai_check_limit", current_settings().ai_check_limit, errors)
     new = app_settings.AppSettings(
         registration_open=request.form.get("registration_open") == "1",
         require_code=request.form.get("require_code") == "1",
         invite_code=code[:100],
         daily_limit=limit,
+        ai_check_limit=ai_limit,
     )
     if new.registration_open and new.require_code and not new.invite_code:
         errors["invite_code"] = "settings.error.code"
@@ -451,9 +436,25 @@ def update_settings():
     app_settings.save(db, new)
     g.pop("app_settings", None)
     mode = "closed" if not new.registration_open else ("code" if new.require_code else "open")
-    storage.audit(db, "settings_update", g.user, detail=f"registration={mode} daily_limit={new.daily_limit}")
+    storage.audit(db, "settings_update", g.user,
+                  detail=f"registration={mode} daily_limit={new.daily_limit} ai_check_limit={new.ai_check_limit}")
     flash("settings.saved", "success")
     return redirect(url_for("auth.users") + "#registration")
+
+
+def _limit_field(name: str, current: int, errors: dict[str, str]) -> int:
+    """A 0..MAX_LIMIT number from the settings form; a form without the field keeps `current`."""
+    raw = request.form.get(name)
+    if raw is None:
+        return current
+    try:
+        value = int(raw.strip())
+        if not 0 <= value <= app_settings.MAX_LIMIT:
+            raise ValueError
+    except ValueError:
+        errors[name] = "settings.error.limit"
+        return current
+    return value
 
 
 @bp.post("/admin/users/<int:user_id>")
