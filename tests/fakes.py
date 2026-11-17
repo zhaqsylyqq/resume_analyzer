@@ -73,10 +73,10 @@ def smart_handler(profile: dict[str, Any] | None = None, score_for: Callable[[st
     """Answer extraction with a profile, bias checks with `bias`, scoring with every requested id."""
     import re
 
-    from app.services.schemas import BiasReport, CandidateProfile
+    from app.services.schemas import BiasReport, CandidateProfile, ResumeFacts
 
     def handle(call: dict[str, Any]) -> Any:
-        if call["config"].response_schema is CandidateProfile:
+        if call["config"].response_schema in (CandidateProfile, ResumeFacts):
             return profile or PROFILE
         if call["config"].response_schema is BiasReport:
             return bias or {"findings": [], "rewrite": ""}

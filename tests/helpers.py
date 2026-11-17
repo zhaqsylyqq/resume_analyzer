@@ -21,7 +21,9 @@ def upload(client, csrf, session_id, files):
 
 
 def resume_text(i: int) -> bytes:
-    return f"Кандидат {i}. Python-разработчик, Django, PostgreSQL, Docker, {i + 2} года опыта.".encode()
+    """Name and demographics are in the text: since SEC-02a they are extracted locally, not by the AI."""
+    return (f"Айгерим Сапарова\nПол: женский. Возраст: 27\n"
+            f"Кандидат {i}. Python-разработчик, Django, PostgreSQL, Docker, {i + 2} года опыта.").encode()
 
 
 def status(client, session_id):

@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     except (backup_offsite.BackupError, OSError, sqlite3.Error) as exc:
         print(f"Restore check failed: {exc}", file=sys.stderr)
         return 1
-    print(f"OK: {path.name} — " + ", ".join(f"{k} {v}" for k, v in counts.items()))
+    print(f"OK: {path.name}: " + ", ".join(f"{k} {v}" for k, v in counts.items()))  # ASCII: Windows logs
     if args.restore_to:
         print(f"Restored to {args.restore_to}")
     return 0

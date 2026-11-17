@@ -2,7 +2,7 @@ import re
 
 from app import create_app
 from app.services import storage
-from app.services.schemas import CandidateProfile
+from app.services.schemas import ResumeFacts
 
 from .helpers import VACANCY_TEXT, create_session, resume_text, status, upload
 
@@ -10,7 +10,7 @@ from .helpers import VACANCY_TEXT, create_session, resume_text, status, upload
 def calls_by_kind(service):
     kinds = {"extract": 0, "score": 0, "score_ids": []}
     for call in service.client.models.calls:
-        if call["config"].response_schema is CandidateProfile:
+        if call["config"].response_schema is ResumeFacts:
             kinds["extract"] += 1
         else:
             kinds["score"] += 1

@@ -40,6 +40,21 @@ class Demographics(BaseModel):
     photo_mentioned: bool = False
 
 
+class ResumeFacts(BaseModel):
+    """SEC-02a: what the AI extracts from the redacted resume. Name, contacts and
+    demographics are not here: they never reach the AI and are extracted locally (pii.py)."""
+
+    headline: Optional[str] = None
+    summary: str = ""
+    total_experience_years: Optional[float] = Field(default=None, ge=0, le=60)
+    skills: list[str] = Field(default_factory=list)
+    experience: list[ExperienceItem] = Field(default_factory=list)
+    education: list[EducationItem] = Field(default_factory=list)
+    languages: list[LanguageSkill] = Field(default_factory=list)
+    certifications: list[str] = Field(default_factory=list)
+    resume_language: Literal["ru", "kk", "en", "other"] = "other"
+
+
 class CandidateProfile(BaseModel):
     full_name: Optional[str] = None
     contacts: Contacts = Field(default_factory=Contacts)

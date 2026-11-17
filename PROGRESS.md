@@ -24,6 +24,7 @@
 | 18 | S3 example session for new users + delete a vacancy | done |
 | 20 | S5 user feedback: “Подходят” tile filter, mobile layout, score colours | done |
 | 19 | S4 (SIS 10-11): real client IP behind the tunnel, unique email, audit de-dup; CR-01 candidate pipeline | done |
+| 22 | SEC-02a: no personal data in AI requests — local redaction and local extraction of name, contacts, demographics ([spec](docs/specs/SEC-02a-redaction.md)) | done |
 | 21 | Enterprise roadmap, stage 0 (QW-01…QW-06): offsite backup, AI check quota, locked dependencies, HTTPS behind the proxy, queue resume, repository hygiene ([spec](docs/specs/QW-stage0.md)) | done in code; owner steps in the spec |
 
 ## Done

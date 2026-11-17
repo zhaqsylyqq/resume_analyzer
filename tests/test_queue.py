@@ -7,7 +7,7 @@ import pytest
 
 from app.services import jobs, storage
 from app.services.gemini import GeminiService
-from app.services.schemas import CandidateProfile
+from app.services.schemas import ResumeFacts
 
 from .fakes import FakeClient, smart_handler
 from .helpers import VACANCY_TEXT, create_session, resume_text, status, upload
@@ -27,7 +27,7 @@ def recording_service(order):
     base = smart_handler()
 
     def handler(call):
-        if call["config"].response_schema is CandidateProfile:
+        if call["config"].response_schema is ResumeFacts:
             order.append(re.search(r"CV (\w+)-\d+", call["contents"]).group(1))
         return base(call)
 

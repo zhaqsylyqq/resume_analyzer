@@ -11,7 +11,7 @@ from app.services.gemini import (
     get_gemini,
     verdict_for,
 )
-from app.services.schemas import CandidateProfile, VacancyInput
+from app.services.schemas import CandidateProfile, ResumeFacts, VacancyInput
 
 from .fakes import PROFILE, FakeClient, api_error, daily_quota_error, scoring_reply
 
@@ -44,10 +44,11 @@ def make_service(replies, **kwargs):
 
 def test_extract_profile_returns_validated_model():
     service, _ = make_service([PROFILE])
-    profile = service.extract_profile("Резюме ...")
+    profile = service.extract_profile("Айгерим Сапарова\nПол: женский\nPython-разработчик")
     assert isinstance(profile, CandidateProfile)
     assert profile.skills[0] == "Python"
-    assert profile.demographics.gender == "female"
+    assert profile.demographics.gender == "female"  # from the text, locally (SEC-02a)
+    assert profile.full_name == "Айгерим Сапарова"
 
 
 def test_request_uses_json_mode_schema_and_temperature_zero():
@@ -55,7 +56,7 @@ def test_request_uses_json_mode_schema_and_temperature_zero():
     service.extract_profile("text")
     config = service.client.models.calls[0]["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema is CandidateProfile
+    assert config.response_schema is ResumeFacts
     assert config.temperature == 0
 
 

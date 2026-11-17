@@ -45,8 +45,9 @@ from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel, ValidationError
 
+from . import pii
 from .anonymize import scoring_view
-from .schemas import CandidateProfile, FitAssessment, ScoringResult, VacancyInput
+from .schemas import CandidateProfile, FitAssessment, ResumeFacts, ScoringResult, VacancyInput
 
 log = logging.getLogger(__name__)
 
@@ -248,11 +249,20 @@ class GeminiService:
     # Public API -----------------------------------------------------------------------
 
     def extract_profile(self, resume_text: str, language: str = "ru") -> CandidateProfile:
+        """SEC-02a: personal data is removed locally first; the AI sees only the redacted text
+        and returns professional facts. Name, contacts and demographics come from pii.redact."""
+        redaction = pii.redact(resume_text)
         system = load_prompt("extract_system").substitute(
             today=date.today().isoformat(), language=LANGUAGE_NAMES.get(language, "Russian")
         )
-        user = load_prompt("extract_user").substitute(resume=fence(resume_text, "resume"))
-        return self.generate(system, user, CandidateProfile)
+        user = load_prompt("extract_user").substitute(resume=fence(redaction.text, "resume"))
+        facts = self.generate(system, user, ResumeFacts)
+        return CandidateProfile(
+            **facts.model_dump(),
+            full_name=redaction.full_name,
+            contacts=redaction.contacts,
+            demographics=redaction.demographics,
+        )
 
     def score(
         self, profile: CandidateProfile, vacancies: list[VacancyInput], language: str = "ru"

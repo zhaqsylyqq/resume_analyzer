@@ -30,6 +30,7 @@ removed from the tree and stays in the git history (before commit `4466bb2`).
 | S5 | “Подходят” tile opens the suitable candidates; mobile layout (top bar, cards for admin tables); coloured score pill and visible bar |
 | CR-01 | Candidate pipeline — status per candidate (new, shortlist, interview, offer, rejected) with a note, status filter, name search; status and note in all exports |
 | Q1 | Fair queue — sessions take turns resume by resume; the session page shows the time remaining |
+| SEC-02a | Personal data is removed from the resume text on the server before anything goes to the AI provider |
 | R1 | Data retention (sessions untouched for `RETENTION_DAYS` are deleted) and consistent database backups |
 
 UI in Russian and Kazakh, light/dark theme, responsive down to phone width.
@@ -295,7 +296,10 @@ recreating the container on the same volume.
 upload ─► parsing (F4) ─► resumes: pending
                               │  shared worker pool, sessions take turns (Q1)
                               ▼
-            Gemini extraction ─► profile  +  demographics (separate table)
+            pii.redact (local): name, contacts, demographics ─► kept here, never sent
+                              │  redacted text only
+                              ▼
+            AI extraction ─► profile  +  demographics (separate table)
                               │
           anonymize.scoring_view (no name, contacts, demographics, dates)
                               ▼
@@ -304,9 +308,13 @@ upload ─► parsing (F4) ─► resumes: pending
 vacancy text ─► lexicon + optional Gemini review ─► bias report (B1)
 ```
 
-- **Two AI calls per resume.** Extraction sees the raw text; scoring sees only the
-  anonymized professional profile, so the score cannot depend on gender, age, marital
-  status, nationality, photo, name or contacts.
+- **Two AI calls per resume, no personal data in either (SEC-02a).** Before extraction,
+  `app/services/pii.py` removes the name, e-mails, phones, IIN and document numbers, links,
+  birth date and age, gender, family status, nationality, street address and referees'
+  names, and replaces them with markers such as `[EMAIL]`. Name, contacts and demographics
+  are taken from the text locally. Scoring then sees only the anonymized professional
+  profile, so the score cannot depend on gender, age, marital status, nationality, photo,
+  name or contacts. Limits: [`docs/specs/SEC-02a-redaction.md`](docs/specs/SEC-02a-redaction.md).
 - **Reliability.** JSON mode with a response schema, pydantic validation, one retry on
   invalid output, then `analysis_failed` without stopping the batch. 429/503 put that model
   on a shared cooldown and traffic switches to the fallback model immediately.

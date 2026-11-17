@@ -16,10 +16,10 @@ SCORES = {"alpha": 90, "bravo": 70, "charlie": 50, "delta": 20}
 
 @pytest.fixture()
 def mixed(app, client, csrf):
-    from app.services.schemas import CandidateProfile
+    from app.services.schemas import ResumeFacts
 
     def handle(call):  # the profile carries the name, scoring reads it back
-        if call["config"].response_schema is CandidateProfile:
+        if call["config"].response_schema is ResumeFacts:
             name = next(k for k in SCORES if k in call["contents"])
             return {**PROFILE, "full_name": name, "headline": f"Developer band{SCORES[name]}"}
         ids = [int(i) for i in re.search(r"Vacancy ids to assess: ([\d, ]+)", call["contents"]).group(1).split(",")]

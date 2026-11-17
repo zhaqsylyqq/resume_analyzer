@@ -1,7 +1,7 @@
 """Concurrency edge cases of the background job runner."""
 from app.services import jobs, storage
 from app.services.gemini import GeminiService
-from app.services.schemas import CandidateProfile
+from app.services.schemas import ResumeFacts
 
 from .fakes import FakeClient, smart_handler
 from .helpers import VACANCY_TEXT, create_session, resume_text, status, upload
@@ -45,7 +45,7 @@ def test_vacancy_added_during_scoring_is_scored_for_that_resume(app, client, csr
     added = {"done": False}
 
     def handler(call):
-        if call["config"].response_schema is not CandidateProfile and not added["done"]:
+        if call["config"].response_schema is not ResumeFacts and not added["done"]:
             added["done"] = True  # HR adds a vacancy while this resume is being scored
             db = storage.connect(app.config["DATABASE"])
             storage.add_vacancy(db, session_id, "Data Engineer", VACANCY_TEXT + " Airflow")
