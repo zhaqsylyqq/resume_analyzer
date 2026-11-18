@@ -181,6 +181,8 @@ read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kube
 |----------|---------|---------|
 | `APP_ENV` | `development` | `production` makes the AI key and HTTPS-only cookies mandatory and never generates a new session secret; `development`, `test` |
 | `DATA_DIR` | `instance/` | Folder for the SQLite database and the generated session secret |
+| `BACKUP_RESTORE_URL` | empty | Scratch PostgreSQL database where `restore-check` restores a copy to prove it (wiped every time; never the live one) |
+| `PG_BIN_DIR` | PATH, then `C:\Program Files\PostgreSQL\16\bin` | Folder with `pg_dump` / `pg_restore` for PostgreSQL backups |
 | `DATABASE_URL` | empty (SQLite) | `postgresql://user:password@host:5432/db`: use PostgreSQL; the schema is migrated at start-up (Alembic). Shown in reports with the password masked |
 | `ADMIN_MFA_REQUIRED` | `0` | `1` = admins must switch on two-factor sign-in before using the app |
 | `SHUTDOWN_TIMEOUT` | `25` | Seconds a stopping server waits for resumes being analyzed (keep below the orchestrator's grace period) |
@@ -221,6 +223,7 @@ read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kube
 | Prove a copy can be restored | `flask --app app restore-check [FILE] [--restore-to PATH]` |
 | Check the live database and the queue | `flask --app app db-check` |
 | Apply PostgreSQL migrations | `flask --app app db-upgrade` (also automatic at start-up) |
+| Move the data from SQLite to PostgreSQL | `flask --app app db-move --to postgresql://… [--replace]` (site stopped) |
 | New backup key | `flask --app app generate-backup-key` |
 | Switch off 2FA for a locked-out user | `flask --app app reset-2fa USER` |
 | One-time password reset link | `flask --app app reset-link USER [--base-url URL]` |

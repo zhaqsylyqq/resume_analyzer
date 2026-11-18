@@ -33,11 +33,19 @@ from .services import storage
 
 
 def _database() -> Path:
-    """The SQLite file. File backups do not apply to PostgreSQL (pg_dump copies come with APP-03)."""
+    """The SQLite file (for commands that only make sense for SQLite)."""
     target = current_app.config["DATABASE"]
     if dbapi.is_postgres_url(target):
-        raise click.ClickException("the database is PostgreSQL: file backups are for SQLite; use pg_dump (APP-03)")
+        raise click.ClickException("the database is PostgreSQL: this command is for the SQLite file")
     return Path(target)
+
+
+def _source() -> str:
+    """The database the app uses: a SQLite file path or a postgresql:// URL (APP-03)."""
+    return str(current_app.config["DATABASE"])
+
+
+BACKUP_ERRORS = (backups.BackupError, OSError, sqlite3.Error, RuntimeError)
 
 
 def _offsite_dir(out: Path | None) -> Path:
@@ -61,11 +69,18 @@ def _key() -> bytes:
 @click.option("--keep", type=click.IntRange(min=0), default=14, show_default=True, help="Copies to keep; 0 keeps all.")
 @with_appcontext
 def backup_command(out: Path | None, keep: int) -> None:
-    """Consistent snapshot of the database, checked with integrity_check."""
+    """Consistent snapshot of the database (SQLite: checked with integrity_check; PostgreSQL: pg_dump)."""
     target_dir = out or Path(current_app.instance_path) / "backups"
     try:
-        path = backups.backup(_database(), target_dir, keep)
-    except (OSError, sqlite3.Error, RuntimeError) as exc:
+        if dbapi.is_postgres_url(_source()):
+            from .services import pgtools
+
+            target_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
+            path = target_dir / f"app-{datetime.now().strftime('%Y%m%d-%H%M%S')}.dump"
+            pgtools.dump(_source(), path)
+        else:
+            path = backups.backup(_database(), target_dir, keep)
+    except BACKUP_ERRORS as exc:
         raise click.ClickException(f"backup failed: {exc}") from None
     click.echo(f"Backup written: {path} ({path.stat().st_size // 1024} KB)")
 
@@ -78,8 +93,8 @@ def backup_offsite_command(out: Path | None, keep: int) -> None:
     """Encrypted copy of the database outside this disk (AES-256-GCM, BACKUP_KEY)."""
     folder, key = _offsite_dir(out), _key()
     try:
-        path = backups.backup_offsite(_database(), folder, key, keep)
-    except (backups.BackupError, OSError, sqlite3.Error, RuntimeError) as exc:
+        path = backups.make_offsite_copy(_source(), folder, key, keep, work_dir=Path(current_app.instance_path))
+    except BACKUP_ERRORS as exc:
         raise click.ClickException(f"offsite backup failed: {exc}") from None
     click.echo(f"Encrypted backup written: {path} ({path.stat().st_size // 1024} KB)")
 
@@ -98,8 +113,8 @@ def restore_check_command(file: Path | None, restore_to: Path | None) -> None:
             raise click.ClickException("no encrypted copies found")
         file = copies[-1]
     try:
-        counts = backups.check(file, key, restore_to)
-    except (backups.BackupError, OSError, sqlite3.Error) as exc:
+        counts = backups.check(file, key, restore_to, current_app.config.get("BACKUP_RESTORE_URL") or None)
+    except BACKUP_ERRORS as exc:
         raise click.ClickException(f"restore check failed: {exc}") from None
     click.echo(f"OK: {file.name}: " + ", ".join(f"{k} {v}" for k, v in counts.items()))
     if restore_to:
@@ -207,7 +222,8 @@ def backup_auto_command(max_age_hours: int, remind_days: int, keep: int) -> None
     if not folder:
         raise click.ClickException("set BACKUP_OFFSITE_DIR in .env")
     now = datetime.now(timezone.utc)
-    result = backups.auto_backup(_database(), Path(folder), _key(), state_dir, max_age=timedelta(hours=max_age_hours),
+    result = backups.auto_backup(_source(), Path(folder), _key(), state_dir, max_age=timedelta(hours=max_age_hours),
+                                 restore_url=current_app.config.get("BACKUP_RESTORE_URL") or None,
                                  remind_after=timedelta(days=remind_days), keep=keep, now=now)
     if result.status in ("done", "failed"):
         _log(state_dir, result.message)  # "fresh" / "absent" every 30 minutes would flood the log
@@ -241,6 +257,39 @@ def db_upgrade_command() -> None:
     click.echo(f"Schema at revision {migrations.current(target)}.")
 
 
+@click.command("db-move")
+@click.option("--from", "sqlite_path", type=click.Path(path_type=Path), default=None,
+              help="SQLite file (default: <data>/app.db).")
+@click.option("--to", "target_url", default=None, help="postgresql:// URL (default: DATABASE_URL).")
+@click.option("--replace", is_flag=True, help="Empty the PostgreSQL database first if it already holds data.")
+@with_appcontext
+def db_move_command(sqlite_path: Path | None, target_url: str | None, replace: bool) -> None:
+    """APP-03: copy all data from the SQLite file to PostgreSQL and compare both sides.
+
+    Stop the site first. The SQLite file is only read; run again with --replace to redo.
+    """
+    from .services import datamove
+
+    current = _source()
+    default = Path(current) if not dbapi.is_postgres_url(current) else Path(current_app.instance_path) / "app.db"
+    source = sqlite_path or default
+    target = target_url or _source()
+    if not source.is_file():
+        raise click.ClickException(f"SQLite file not found: {source}")
+    if not dbapi.is_postgres_url(target):
+        raise click.ClickException("pass --to postgresql://... or set DATABASE_URL")
+    click.echo(f"Copying {source} -> {dbapi.redact_url(target)} ...")
+    try:
+        report = datamove.move(str(source), target, replace=replace)
+    except (datamove.MoveError,) + dbapi.DatabaseError as exc:
+        raise click.ClickException(f"move failed: {exc}") from None
+    for line in report.lines():
+        click.echo(line)
+    if not report.ok:
+        raise click.ClickException("the copies differ (see DIFF above); the site must stay on SQLite")
+    click.echo("All tables match. Set DATABASE_URL in .env and restart the site to switch.")
+
+
 @click.command("generate-backup-key")
 def generate_backup_key_command() -> None:
     """Print a new BACKUP_KEY. Keep it in a password manager shared by two people."""
@@ -257,6 +306,6 @@ def config_check_command() -> None:
 
 def init_cli(app: Flask) -> None:
     for command in (backup_command, backup_offsite_command, backup_auto_command, restore_check_command, db_check_command,
-                    db_upgrade_command,
+                    db_upgrade_command, db_move_command,
                     generate_backup_key_command, config_check_command):
         app.cli.add_command(command)

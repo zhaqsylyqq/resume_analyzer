@@ -104,42 +104,93 @@ def decrypt(blob: bytes, key: bytes) -> bytes:
         raise BackupError("cannot decrypt: wrong BACKUP_KEY or damaged file") from exc
 
 
+PG_SUFFIX = ".pg.enc"  # APP-03: encrypted pg_dump (custom format) of the PostgreSQL database
+
+
 def _age_key(path: Path) -> tuple[str, int]:
-    match = re.fullmatch(rf"{PREFIX}(\d{{8}}-\d{{6}})(?:-(\d+))?", path.name[: -len(SUFFIX)])
+    stem = path.name[: -len(PG_SUFFIX)] if path.name.endswith(PG_SUFFIX) else path.name[: -len(SUFFIX)]
+    match = re.fullmatch(rf"{PREFIX}(\d{{8}}-\d{{6}})(?:-(\d+))?", stem)
     return (match.group(1), int(match.group(2) or 1)) if match else ("", 0)
 
 
 def list_backups(out_dir: Path) -> list[Path]:
-    """Encrypted copies, oldest first."""
-    return sorted(out_dir.glob(f"{PREFIX}*{SUFFIX}"), key=_age_key)
+    """Encrypted copies (SQLite and PostgreSQL), oldest first."""
+    copies = list(out_dir.glob(f"{PREFIX}*{SUFFIX}")) + list(out_dir.glob(f"{PREFIX}*{PG_SUFFIX}"))
+    return sorted(copies, key=_age_key)
 
 
-def backup_offsite(db_path: Path, out_dir: Path, key: bytes, keep: int = 30, now: datetime | None = None) -> Path:
-    if not out_dir.is_dir():
-        raise BackupError(f"backup folder not found (is the drive connected?): {out_dir}")
+def _new_target(out_dir: Path, suffix: str, now: datetime | None) -> Path:
     stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
-    target = out_dir / f"{PREFIX}{stamp}{SUFFIX}"
+    target = out_dir / f"{PREFIX}{stamp}{suffix}"
     n = 2
     while target.exists():
-        target = out_dir / f"{PREFIX}{stamp}-{n}{SUFFIX}"
+        target = out_dir / f"{PREFIX}{stamp}-{n}{suffix}"
         n += 1
+    return target
 
-    # The plain snapshot stays next to the database (same disk, same permissions).
-    with tempfile.TemporaryDirectory(dir=db_path.parent, prefix=".offsite-") as tmp:
-        snapshot = backup(db_path, Path(tmp), keep=0, now=now)
-        blob = encrypt(snapshot.read_bytes(), key)
+
+def _write_atomically(target: Path, blob: bytes, out_dir: Path, keep: int) -> Path:
     partial = target.with_name(target.name + ".part")
     partial.write_bytes(blob)
     os.replace(partial, target)  # a crash never leaves a half-written file under the final name
-
     if keep > 0:
         for old in list_backups(out_dir)[:-keep]:
             old.unlink(missing_ok=True)
     return target
 
 
-def check(blob_path: Path, key: bytes, restore_to: Path | None = None) -> dict[str, int]:
+def backup_offsite(db_path: Path, out_dir: Path, key: bytes, keep: int = 30, now: datetime | None = None) -> Path:
+    if not out_dir.is_dir():
+        raise BackupError(f"backup folder not found (is the drive connected?): {out_dir}")
+    target = _new_target(out_dir, SUFFIX, now)
+    # The plain snapshot stays next to the database (same disk, same permissions).
+    with tempfile.TemporaryDirectory(dir=db_path.parent, prefix=".offsite-") as tmp:
+        snapshot = backup(db_path, Path(tmp), keep=0, now=now)
+        blob = encrypt(snapshot.read_bytes(), key)
+    return _write_atomically(target, blob, out_dir, keep)
+
+
+def pg_backup_offsite(url: str, out_dir: Path, key: bytes, keep: int = 30, now: datetime | None = None,
+                      work_dir: Path | None = None) -> Path:
+    """APP-03: pg_dump of the PostgreSQL database, encrypted like the SQLite copies."""
+    from . import pgtools
+
+    if not out_dir.is_dir():
+        raise BackupError(f"backup folder not found (is the drive connected?): {out_dir}")
+    target = _new_target(out_dir, PG_SUFFIX, now)
+    with tempfile.TemporaryDirectory(dir=work_dir, prefix=".offsite-") as tmp:
+        dump = Path(tmp) / "app.dump"
+        pgtools.dump(url, dump)
+        blob = encrypt(dump.read_bytes(), key)
+    return _write_atomically(target, blob, out_dir, keep)
+
+
+def make_offsite_copy(source: str, out_dir: Path, key: bytes, keep: int = 30, now: datetime | None = None,
+                      work_dir: Path | None = None) -> Path:
+    """An encrypted copy of whichever database the app uses (SQLite file or postgresql:// URL)."""
+    from .db import is_postgres_url
+
+    if is_postgres_url(source):
+        return pg_backup_offsite(source, out_dir, key, keep, now, work_dir)
+    return backup_offsite(Path(source), out_dir, key, keep, now)
+
+
+def check(blob_path: Path, key: bytes, restore_to: Path | None = None, restore_url: str | None = None) -> dict[str, int]:
+    """Decrypt a copy and prove it is usable; row counts of the main tables.
+
+    PostgreSQL copies are restored into `restore_url` (a scratch database that is wiped) when
+    given; otherwise their table of contents is checked with pg_restore --list.
+    """
     data = decrypt(blob_path.read_bytes(), key)
+    if blob_path.name.endswith(PG_SUFFIX):
+        from . import pgtools
+
+        if restore_to is not None:
+            raise BackupError("--restore-to is for SQLite copies; restore a PostgreSQL copy with pg_restore")
+        with tempfile.TemporaryDirectory(prefix="hrscreen-restore-") as tmp:
+            dump = Path(tmp) / "app.dump"
+            dump.write_bytes(data)
+            return pgtools.verify(dump, TABLES, restore_url)
     with tempfile.TemporaryDirectory(prefix="hrscreen-restore-") as tmp:
         plain = Path(tmp) / "app.db"
         plain.write_bytes(data)
@@ -210,9 +261,9 @@ def _copy_time(path: Path) -> datetime:
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
 
 
-def auto_backup(db_path: Path, configured: Path, key: bytes, state_dir: Path, *, max_age: timedelta,
+def auto_backup(db_path: Path | str, configured: Path, key: bytes, state_dir: Path, *, max_age: timedelta,
                 remind_after: timedelta, keep: int = 30, now: datetime | None = None,
-                drives: list[Path] | None = None) -> AutoResult:
+                drives: list[Path] | None = None, restore_url: str | None = None) -> AutoResult:
     """Run often (every 30 minutes): make and verify a copy only when the drive is connected and
     the newest copy is older than `max_age`; otherwise do nothing, and ask for a reminder when
     there has been no verified copy for `remind_after`."""
@@ -232,8 +283,8 @@ def auto_backup(db_path: Path, configured: Path, key: bytes, state_dir: Path, *,
         if now - newest < max_age:
             return AutoResult("fresh", f"newest copy {copies[-1].name} is recent; nothing to do", folder, last_ok)
     try:
-        target = backup_offsite(db_path, folder, key, keep, now=now.astimezone())
-        counts = check(target, key)
+        target = make_offsite_copy(str(db_path), folder, key, keep, now=now.astimezone(), work_dir=state_dir)
+        counts = check(target, key, restore_url=restore_url)
     except (BackupError, OSError, sqlite3.Error, RuntimeError) as exc:
         overdue = last_ok is None or now - last_ok > remind_after
         return AutoResult("failed", f"offsite backup failed: {exc}", folder, last_ok, overdue)

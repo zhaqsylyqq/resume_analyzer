@@ -26,7 +26,7 @@ from typing import Any
 
 ENVIRONMENTS = ("development", "production", "test")
 PROVIDERS = ("gemini", "deepseek")
-SECRET_NAMES = ("FLASK_SECRET_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "INVITE_CODE", "BACKUP_KEY", "DATABASE_URL")
+SECRET_NAMES = ("FLASK_SECRET_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "INVITE_CODE", "BACKUP_KEY", "DATABASE_URL", "BACKUP_RESTORE_URL")
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off", ""}
 
@@ -73,6 +73,8 @@ class Settings:
     data_dir: str = ""
     # APP-02: postgresql://user:password@host:5432/db; empty = SQLite file <data>/app.db
     database_url: str = ""
+    # APP-03: scratch PostgreSQL database where restore-check restores a copy to prove it (wiped each time)
+    backup_restore_url: str = ""
     # APP-08: seconds a stopping server waits for resumes being analyzed (keep below the
     # orchestrator's grace period: Docker 10 s by default, Kubernetes 30 s)
     shutdown_timeout: int = 25
@@ -113,6 +115,7 @@ class Settings:
             "ADMIN_MFA_REQUIRED": self.admin_mfa_required,
             "BACKUP_OFFSITE_DIR": self.backup_offsite_dir,
             "BACKUP_KEY": self.backup_key,
+            "BACKUP_RESTORE_URL": self.backup_restore_url,
             # Uploads
             "MAX_FILES_PER_BATCH": 50,
             "MAX_FILE_BYTES": 5 * 1024 * 1024,
@@ -138,10 +141,11 @@ class Settings:
                 continue
             name = f.name.upper()
             value = getattr(self, f.name)
-            if name == "DATABASE_URL":
+            if name in ("DATABASE_URL", "BACKUP_RESTORE_URL"):
                 from .services.db import redact_url
 
-                shown = redact_url(value) if value else "not set (SQLite file in DATA_DIR)"
+                empty = "not set (SQLite file in DATA_DIR)" if name == "DATABASE_URL" else "not set"
+                shown = redact_url(value) if value else empty
             elif name in SECRET_NAMES:
                 source = self.secret_sources.get(name)
                 shown = ("set" + (f" (from {source})" if source else "")) if value else "not set"
@@ -257,6 +261,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         flask_secret_key=r.secret("FLASK_SECRET_KEY"),
         data_dir=r.text("DATA_DIR"),
         database_url=r.secret("DATABASE_URL"),
+        backup_restore_url=r.secret("BACKUP_RESTORE_URL"),
         shutdown_timeout=r.integer("SHUTDOWN_TIMEOUT", 25, minimum=0, maximum=600),
         admin_mfa_required=r.boolean("ADMIN_MFA_REQUIRED", False),
         backup_offsite_dir=r.text("BACKUP_OFFSITE_DIR"),
@@ -268,6 +273,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         r.problems.append("DEEPSEEK_BASE_URL must start with https://")
     if settings.database_url and not settings.database_url.startswith(("postgresql://", "postgres://")):
         r.problems.append("DATABASE_URL must start with postgresql:// (or leave it empty for SQLite)")
+    if settings.backup_restore_url and settings.backup_restore_url == settings.database_url:
+        r.problems.append("BACKUP_RESTORE_URL must be a separate scratch database, never DATABASE_URL (it is wiped)")
     if settings.backup_key:
         from .services.backup import BackupError, load_key
 
