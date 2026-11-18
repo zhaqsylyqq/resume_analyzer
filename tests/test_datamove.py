@@ -143,3 +143,17 @@ def test_restore_url_must_not_be_the_live_database():
 
     with pytest.raises(ConfigError, match="BACKUP_RESTORE_URL"):
         load_settings({"DATABASE_URL": "postgresql://a@h/x", "BACKUP_RESTORE_URL": "postgresql://a@h/x"})
+
+
+@needs_tools
+def test_auto_backup_makes_a_postgres_copy_after_the_move(app, tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    key = backups.load_key(backups.generate_key())
+    usb = tmp_path / "usb"
+    usb.mkdir()
+    (usb / "app-20991231-235959.db.enc").write_bytes(b"old sqlite copy")  # newest, but of the old engine
+    result = backups.auto_backup(TEST_DATABASE_URL, usb, key, tmp_path / "state", max_age=timedelta(hours=20),
+                                 remind_after=timedelta(days=3), now=datetime.now(timezone.utc))
+    assert result.status == "done", result.message
+    assert any(p.name.endswith(".pg.enc") for p in backups.list_backups(usb))

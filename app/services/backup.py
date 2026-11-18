@@ -268,6 +268,7 @@ def auto_backup(db_path: Path | str, configured: Path, key: bytes, state_dir: Pa
     the newest copy is older than `max_age`; otherwise do nothing, and ask for a reminder when
     there has been no verified copy for `remind_after`."""
     now = now or datetime.now(timezone.utc)
+    state_dir.mkdir(parents=True, exist_ok=True)
     last_ok = read_last_ok(state_dir)
     folder = find_backup_folder(configured, drives)
     if folder is None:
@@ -280,7 +281,11 @@ def auto_backup(db_path: Path | str, configured: Path, key: bytes, state_dir: Pa
         newest = _copy_time(copies[-1])
         if last_ok is None or newest > last_ok:
             last_ok = newest  # e.g. a copy made by hand
-        if now - newest < max_age:
+        from .db import is_postgres_url
+
+        # After the move to PostgreSQL the newest copy may still be of the old SQLite file.
+        same_kind = copies[-1].name.endswith(PG_SUFFIX) == is_postgres_url(str(db_path))
+        if same_kind and now - newest < max_age:
             return AutoResult("fresh", f"newest copy {copies[-1].name} is recent; nothing to do", folder, last_ok)
     try:
         target = make_offsite_copy(str(db_path), folder, key, keep, now=now.astimezone(), work_dir=state_dir)
