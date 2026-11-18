@@ -180,6 +180,7 @@ read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kube
 |----------|---------|---------|
 | `APP_ENV` | `development` | `production` makes the AI key and HTTPS-only cookies mandatory and never generates a new session secret; `development`, `test` |
 | `DATA_DIR` | `instance/` | Folder for the SQLite database and the generated session secret |
+| `ADMIN_MFA_REQUIRED` | `0` | `1` = admins must switch on two-factor sign-in before using the app |
 | `SHUTDOWN_TIMEOUT` | `25` | Seconds a stopping server waits for resumes being analyzed (keep below the orchestrator's grace period) |
 | `LLM_PROVIDER` | `gemini` | AI provider: `deepseek` or `gemini` |
 | `DEEPSEEK_API_KEY` | — (required for DeepSeek) | DeepSeek API key |
@@ -217,6 +218,8 @@ read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kube
 | Prove a copy can be restored | `flask --app app restore-check [FILE] [--restore-to PATH]` |
 | Check the live database and the queue | `flask --app app db-check` |
 | New backup key | `flask --app app generate-backup-key` |
+| Switch off 2FA for a locked-out user | `flask --app app reset-2fa USER` |
+| One-time password reset link | `flask --app app reset-link USER [--base-url URL]` |
 | Check the configuration | `python -m app.check_config` (or `flask --app app config-check`) |
 | Run (production) | `waitress-serve --host 0.0.0.0 --port 8000 --call app:create_server_app` |
 | Tests | `pytest -q` (Gemini is mocked, no key needed) |
@@ -372,6 +375,13 @@ issues in [`PROGRESS.md`](PROGRESS.md).
   session is renewed on login and expires after 12 hours. Recruiters see only their own
   sessions (other sessions answer 404); admins see all and manage users. Opening,
   exporting and deleting a session is written to an audit log (`/admin/audit`).
+- Two-factor sign-in (SEC-01): any user can switch it on in **Profile** (click your name):
+  a 6-digit code from an authenticator app (RFC 6238) after the password, plus 10 one-time
+  recovery codes. `ADMIN_MFA_REQUIRED=1` makes it mandatory for admins. Users change their
+  own password in Profile; a forgotten password is reset with a one-time link (valid 1 hour)
+  that an admin creates on the Users page and passes on — there is no e-mail sending.
+  Changing the password or switching 2FA on/off signs out the user's other sessions.
+  Locked out completely: `flask --app app reset-2fa USER`, `flask --app app reset-link USER`.
 - CSRF tokens on every state-changing request; strict Content-Security-Policy (no inline
   scripts or styles), `X-Frame-Options: DENY`, `nosniff`, restrictive referrer and
   permissions policies, HSTS over HTTPS, `HttpOnly` + `SameSite=Lax` cookies.

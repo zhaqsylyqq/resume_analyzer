@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ t('reset.link.title') }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ t('reset.link.title') }}</h1>
+    <p class="muted">{{ t('reset.link.lead').format(username=target.username, minutes=minutes) }}</p>
+  </div>
+  <a class="btn" href="{{ url_for('auth.users') }}">{{ t('reset.link.back') }}</a>
+</div>
+<section class="card stack">
+  <label class="label" for="reset-link">{{ t('reset.link.label') }}</label>
+  <input class="input mono" id="reset-link" value="{{ link }}" readonly>
+  <p class="hint mb-0">{{ t('reset.link.hint') }}</p>
+</section>
+{% endblock %}

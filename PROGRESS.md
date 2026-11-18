@@ -24,6 +24,7 @@
 | 18 | S3 example session for new users + delete a vacancy | done |
 | 20 | S5 user feedback: “Подходят” tile filter, mobile layout, score colours | done |
 | 19 | S4 (SIS 10-11): real client IP behind the tunnel, unique email, audit de-dup; CR-01 candidate pipeline | done |
+| 27 | SEC-01: two-factor sign-in (TOTP + recovery codes), own password change, one-time password reset links from admins, `ADMIN_MFA_REQUIRED` ([spec](docs/specs/SEC-01-mfa-password-reset.md)) | done |
 | 26 | APP-09: service commands `flask --app app backup / backup-offsite / restore-check / db-check / generate-backup-key`; backup logic in `app/services/backup.py`, scripts kept as wrappers ([spec](docs/specs/APP-09-service-commands.md)) | done |
 | 25 | APP-08: `/readyz` readiness check, graceful shutdown on SIGTERM / Ctrl+C (finishes resumes in analysis, `SHUTDOWN_TIMEOUT`); gunicorn deferred to APP-04 ([spec](docs/specs/APP-08-shutdown-health.md)) | done |
 | 24 | APP-01: one validated configuration — fail fast on bad values, `APP_ENV=production` profile, secrets from files, `DATA_DIR`, `python -m app.check_config` ([spec](docs/specs/APP-01-config.md)) | done |

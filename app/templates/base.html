@@ -45,7 +45,11 @@
         {% if g.user %}
         <form method="post" action="{{ url_for('auth.logout') }}" class="user-menu">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <span class="user-menu__name" title="{{ t('role.' ~ g.user.role) }}">{{ g.user.username }}</span>
+          <a class="user-menu__name" href="{{ url_for('account.index') }}" title="{{ t('account.title') }}"
+             {% if (request.endpoint or '').startswith('account.') %}aria-current="page"{% endif %}>{{ g.user.username }}</a>
+          <a class="icon-btn user-menu__icon" href="{{ url_for('account.index') }}" aria-label="{{ t('account.title') }}" title="{{ t('account.title') }}">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+          </a>
           <button type="submit" class="icon-btn" aria-label="{{ t('auth.logout') }}" title="{{ t('auth.logout') }}">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H3"/></svg>
           </button>

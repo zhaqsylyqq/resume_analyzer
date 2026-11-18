@@ -74,6 +74,8 @@ class Settings:
     # APP-08: seconds a stopping server waits for resumes being analyzed (keep below the
     # orchestrator's grace period: Docker 10 s by default, Kubernetes 30 s)
     shutdown_timeout: int = 25
+    # SEC-01: admins must switch on two-factor sign-in before using the app
+    admin_mfa_required: bool = False
     # QW-01 / APP-09: encrypted copies go to this folder outside the host, sealed with this key
     backup_offsite_dir: str = ""
     backup_key: str = ""
@@ -106,6 +108,7 @@ class Settings:
             "STATS_UTC_OFFSET": self.stats_utc_offset,
             "TRUSTED_PROXIES": self.trusted_proxies,
             "SHUTDOWN_TIMEOUT": self.shutdown_timeout,
+            "ADMIN_MFA_REQUIRED": self.admin_mfa_required,
             "BACKUP_OFFSITE_DIR": self.backup_offsite_dir,
             "BACKUP_KEY": self.backup_key,
             # Uploads
@@ -248,6 +251,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         flask_secret_key=r.secret("FLASK_SECRET_KEY"),
         data_dir=r.text("DATA_DIR"),
         shutdown_timeout=r.integer("SHUTDOWN_TIMEOUT", 25, minimum=0, maximum=600),
+        admin_mfa_required=r.boolean("ADMIN_MFA_REQUIRED", False),
         backup_offsite_dir=r.text("BACKUP_OFFSITE_DIR"),
         backup_key=r.secret("BACKUP_KEY"),
         secret_sources=r.secret_sources,

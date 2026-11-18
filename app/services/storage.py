@@ -105,6 +105,15 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_llm_usage_user ON llm_usage(user_id, kind, created_at);
+-- SEC-01: one-time password reset links created by an admin; only a hash of the token is kept
+CREATE TABLE IF NOT EXISTS password_resets (
+    token_hash  TEXT PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    used_at     TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_vacancies_session ON vacancies(session_id);
 CREATE INDEX IF NOT EXISTS idx_resumes_session_status ON resumes(session_id, status);
@@ -163,6 +172,9 @@ def _migrate(db: sqlite3.Connection) -> None:
     user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
     if "email" not in user_columns:  # S2
         db.execute("ALTER TABLE users ADD COLUMN email TEXT")
+    for column, kind in (("totp_secret", "TEXT"), ("totp_last_step", "INTEGER"), ("recovery_codes", "TEXT")):
+        if column not in user_columns:  # SEC-01: two-factor sign-in
+            db.execute(f"ALTER TABLE users ADD COLUMN {column} {kind}")
     resume_columns = {row["name"] for row in db.execute("PRAGMA table_info(resumes)")}
     if "started_at" not in resume_columns:  # Q1: time per resume for the ETA
         db.execute("ALTER TABLE resumes ADD COLUMN started_at TEXT")
@@ -555,7 +567,7 @@ def list_users(db: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def update_user(db: sqlite3.Connection, user_id: int, **fields: Any) -> None:
-    allowed = {"password_hash", "role", "active", "last_login_at"}
+    allowed = {"password_hash", "role", "active", "last_login_at", "totp_secret", "totp_last_step", "recovery_codes"}
     items = [(k, v) for k, v in fields.items() if k in allowed]
     if not items:
         return
@@ -563,6 +575,41 @@ def update_user(db: sqlite3.Connection, user_id: int, **fields: Any) -> None:
         # Column names come from the `allowed` set above, values are bound.
         db.execute(f"UPDATE users SET {', '.join(f'{k} = ?' for k, _ in items)} WHERE id = ?",  # noqa: S608
                    (*[v for _, v in items], user_id))
+
+
+# SEC-01: password reset links ------------------------------------------------------------------
+
+def create_password_reset(db: sqlite3.Connection, token_hash: str, user_id: int, created_by: int | None,
+                          expires_at: str) -> None:
+    with db:
+        # One valid link per user: a new link replaces older unused ones.
+        db.execute("DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL", (user_id,))
+        db.execute(
+            "INSERT INTO password_resets (token_hash, user_id, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+            (token_hash, user_id, created_by, now(), expires_at),
+        )
+
+
+def get_password_reset(db: sqlite3.Connection, token_hash: str) -> sqlite3.Row | None:
+    """An unused, unexpired reset link."""
+    return db.execute(
+        "SELECT * FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
+        (token_hash, now()),
+    ).fetchone()
+
+
+def use_password_reset(db: sqlite3.Connection, token_hash: str, password_hash: str) -> bool:
+    """Set the new password and burn the link in one transaction; False if it was already used."""
+    with db:
+        row = db.execute(
+            "UPDATE password_resets SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ? "
+            "RETURNING user_id",
+            (now(), token_hash, now()),
+        ).fetchone()
+        if row is None:
+            return False
+        db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, row["user_id"]))
+    return True
 
 
 def audit(db: sqlite3.Connection, action: str, user: sqlite3.Row | None = None, session_id: int | None = None,
