@@ -9,9 +9,10 @@ from __future__ import annotations
 import csv
 import io
 import json
-import sqlite3
 from dataclasses import dataclass, field
 from typing import Callable
+
+from .db import Database
 
 TOP_CHOICES = (5, 10, 20)
 FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
@@ -38,7 +39,7 @@ class RankedCandidate:
     note: str = ""
 
 
-def ranking(db: sqlite3.Connection, vacancy_id: int) -> list[RankedCandidate]:
+def ranking(db: Database, vacancy_id: int) -> list[RankedCandidate]:
     rows = db.execute(
         """
         SELECT r.id AS resume_id, r.filename, r.profile_json, s.score, s.verdict, s.summary, s.details_json,

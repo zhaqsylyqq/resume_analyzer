@@ -27,7 +27,8 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
     os.makedirs(app.instance_path, exist_ok=True)
 
     app.config.from_mapping(settings.to_flask())
-    app.config["DATABASE"] = os.path.join(app.instance_path, "app.db")
+    # APP-02: PostgreSQL when DATABASE_URL is set, otherwise the SQLite file in the data folder
+    app.config["DATABASE"] = settings.database_url or os.path.join(app.instance_path, "app.db")
     if settings.flask_secret_key:
         app.config["SECRET_KEY"] = settings.flask_secret_key
     if overrides:
@@ -38,7 +39,8 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)  # our Gemini service logs retries itself
-    logging.getLogger("fontTools").setLevel(logging.WARNING)  # PDF export font subsetting is noisy
+    logging.getLogger("fontTools").setLevel(logging.WARNING)
+    logging.getLogger("alembic").setLevel(logging.WARNING)  # APP-02: migrations log only problems  # PDF export font subsetting is noisy
 
     init_security(app)
     init_i18n(app)

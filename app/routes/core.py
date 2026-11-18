@@ -1,14 +1,13 @@
 """Home page, language switch, liveness (/healthz) and readiness (/readyz) checks."""
 from __future__ import annotations
 
-import sqlite3
-
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request
 
 from ..auth import owner_filter
 from ..i18n import LANG_COOKIE
 from ..security import is_safe_redirect
 from ..services import jobs, storage
+from ..services.db import DatabaseError
 
 bp = Blueprint("core", __name__)
 
@@ -42,7 +41,7 @@ def ready():
         return jsonify(status="shutting_down"), 503
     try:
         storage.get_db().execute("SELECT 1").fetchone()
-    except sqlite3.Error:
+    except DatabaseError:
         current_app.logger.exception("Readiness check: database unavailable")
         return jsonify(status="database_unavailable"), 503
     return jsonify(status="ready")

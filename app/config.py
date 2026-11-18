@@ -26,7 +26,7 @@ from typing import Any
 
 ENVIRONMENTS = ("development", "production", "test")
 PROVIDERS = ("gemini", "deepseek")
-SECRET_NAMES = ("FLASK_SECRET_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "INVITE_CODE", "BACKUP_KEY")
+SECRET_NAMES = ("FLASK_SECRET_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "INVITE_CODE", "BACKUP_KEY", "DATABASE_URL")
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off", ""}
 
@@ -71,6 +71,8 @@ class Settings:
     flask_secret_key: str = ""
     # Where the SQLite database and the generated secret live; default: Flask's instance folder
     data_dir: str = ""
+    # APP-02: postgresql://user:password@host:5432/db; empty = SQLite file <data>/app.db
+    database_url: str = ""
     # APP-08: seconds a stopping server waits for resumes being analyzed (keep below the
     # orchestrator's grace period: Docker 10 s by default, Kubernetes 30 s)
     shutdown_timeout: int = 25
@@ -136,7 +138,11 @@ class Settings:
                 continue
             name = f.name.upper()
             value = getattr(self, f.name)
-            if name in SECRET_NAMES:
+            if name == "DATABASE_URL":
+                from .services.db import redact_url
+
+                shown = redact_url(value) if value else "not set (SQLite file in DATA_DIR)"
+            elif name in SECRET_NAMES:
                 source = self.secret_sources.get(name)
                 shown = ("set" + (f" (from {source})" if source else "")) if value else "not set"
             elif isinstance(value, tuple):
@@ -250,6 +256,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         session_cookie_secure=r.boolean("SESSION_COOKIE_SECURE", production),
         flask_secret_key=r.secret("FLASK_SECRET_KEY"),
         data_dir=r.text("DATA_DIR"),
+        database_url=r.secret("DATABASE_URL"),
         shutdown_timeout=r.integer("SHUTDOWN_TIMEOUT", 25, minimum=0, maximum=600),
         admin_mfa_required=r.boolean("ADMIN_MFA_REQUIRED", False),
         backup_offsite_dir=r.text("BACKUP_OFFSITE_DIR"),
@@ -259,6 +266,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
 
     if settings.deepseek_base_url and not settings.deepseek_base_url.startswith("https://"):
         r.problems.append("DEEPSEEK_BASE_URL must start with https://")
+    if settings.database_url and not settings.database_url.startswith(("postgresql://", "postgres://")):
+        r.problems.append("DATABASE_URL must start with postgresql:// (or leave it empty for SQLite)")
     if settings.backup_key:
         from .services.backup import BackupError, load_key
 

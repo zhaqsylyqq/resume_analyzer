@@ -8,10 +8,10 @@ local lexicon only) and is not counted as the user's own "session_create" in sta
 """
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 from .services import bias, storage
+from .services.db import Database
 
 STARTER_SESSION_TITLE = "Пример: Python-разработчик"
 STARTER_VACANCY_TITLE = "Python-разработчик (Middle/Senior)"
@@ -22,7 +22,7 @@ def starter_vacancy_text() -> str:
     return STARTER_VACANCY_FILE.read_text(encoding="utf-8").strip()
 
 
-def create_starter_session(db: sqlite3.Connection, user_id: int, enabled: bool = True) -> int | None:
+def create_starter_session(db: Database, user_id: int, enabled: bool = True) -> int | None:
     """Create the example session for a new user; returns its id (None when disabled)."""
     if not enabled:
         return None

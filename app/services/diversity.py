@@ -10,8 +10,10 @@ language (RU/KK/EN), using only what resumes stated explicitly (everything else 
 """
 from __future__ import annotations
 
-import sqlite3
+import json
 from typing import Any, Iterable
+
+from .db import Database
 
 AGE_BANDS: tuple[tuple[str, int, int], ...] = (
     ("under_25", 0, 24),
@@ -37,7 +39,16 @@ def age_band(age: int | None) -> str:
     return "unknown"
 
 
-def _load(db: sqlite3.Connection, resume_ids: Iterable[int]) -> dict[int, tuple[str, str, str]]:
+def _language(profile_json: str | None) -> str:
+    """resume_language from the stored profile (parsed here: JSON functions differ by database)."""
+    try:
+        value = json.loads(profile_json or "{}").get("resume_language")
+    except (ValueError, AttributeError):
+        return "unknown"
+    return value if value in LANGUAGES else "unknown"
+
+
+def _load(db: Database, resume_ids: Iterable[int]) -> dict[int, tuple[str, str, str]]:
     ids = list(resume_ids)
     if not ids:
         return {}
@@ -45,7 +56,7 @@ def _load(db: sqlite3.Connection, resume_ids: Iterable[int]) -> dict[int, tuple[
     # Only "?" placeholders are interpolated; ids are bound.
     rows = db.execute(
         f"""
-        SELECT r.id AS resume_id, d.gender, d.age, json_extract(r.profile_json, '$.resume_language') AS language
+        SELECT r.id AS resume_id, d.gender, d.age, r.profile_json
         FROM resumes r LEFT JOIN demographics d ON d.resume_id = r.id
         WHERE r.id IN ({placeholders})
         """,  # noqa: S608
@@ -55,7 +66,7 @@ def _load(db: sqlite3.Connection, resume_ids: Iterable[int]) -> dict[int, tuple[
         row["resume_id"]: (
             row["gender"] or "unknown",
             age_band(row["age"]),
-            row["language"] if row["language"] in LANGUAGES else "unknown",
+            _language(row["profile_json"]),
         )
         for row in rows
     }
@@ -88,7 +99,7 @@ def _dimension(keys: list[str], pool: list[str], shortlist: list[str]) -> dict[s
     return {"groups": groups, "known_share": known / len(pool) if pool else 0}
 
 
-def report(db: sqlite3.Connection, pool_ids: list[int], shortlist_ids: list[int]) -> dict[str, Any]:
+def report(db: Database, pool_ids: list[int], shortlist_ids: list[int]) -> dict[str, Any]:
     demo = _load(db, pool_ids)
     unknown = ("unknown", "unknown", "unknown")
     pool = [demo.get(i, unknown) for i in pool_ids]

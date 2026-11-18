@@ -14,8 +14,13 @@ services:
       # cloudflared reaches the app over the compose network, not loopback: trust that
       # network to pass the visitor IP (rate limits per visitor, see docs/specs/S4-*.md)
       TRUSTED_PROXIES: "127.0.0.1,::1,172.16.0.0/12"
+      # APP-02: PostgreSQL in the `db` service; the password comes from POSTGRES_PASSWORD in .env
+      DATABASE_URL: postgresql://hrscreen:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/hrscreen
     volumes:
       - app-data:/app/instance
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     # APP-08: time to finish resumes in analysis on `docker compose down` (SHUTDOWN_TIMEOUT=25)
     stop_grace_period: 30s
@@ -29,5 +34,22 @@ services:
       - app
     restart: unless-stopped
 
+  db:
+    image: postgres:16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
+    environment:
+      POSTGRES_USER: hrscreen
+      POSTGRES_DB: hrscreen
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrscreen -d hrscreen"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    # No ports: only the app reaches the database, over the compose network.
+
 volumes:
   app-data:
+  db-data:

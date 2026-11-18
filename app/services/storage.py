@@ -1,4 +1,7 @@
-"""F3 — SQLite storage for screening sessions, vacancies, resumes and scores.
+"""F3 — storage for screening sessions, vacancies, resumes and scores.
+
+APP-02: the same SQL runs on SQLite (file path in DATABASE) and PostgreSQL (postgresql:// URL);
+see services/db.py. SQLite gets its schema from SCHEMA below, PostgreSQL from Alembic (migrations/).
 
 All SQL uses parameters. Demographics live in their own table with only what B2 needs
 (gender, age) and are never joined into ranking or export queries. Users, session owners
@@ -7,12 +10,13 @@ and the audit log belong to A1 (login and roles).
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from flask import Flask, current_app, g
 
+from . import db as dbapi
+from .db import Database
 from .schemas import CandidateProfile, FitAssessment
 
 # Resume statuses
@@ -121,27 +125,23 @@ CREATE INDEX IF NOT EXISTS idx_scores_vacancy ON scores(vacancy_id, score DESC);
 """
 
 
-def _rowid(value: int | None) -> int:
-    """`cursor.lastrowid` after an INSERT; None would mean the insert did not happen."""
-    if value is None:
-        raise sqlite3.DatabaseError("INSERT returned no row id")
-    return int(value)
+def _rowid(row: Any) -> int:
+    """The id from `INSERT … RETURNING id` (works on SQLite ≥ 3.35 and PostgreSQL)."""
+    if row is None:
+        raise RuntimeError("INSERT returned no row id")
+    return int(row[0])
 
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def connect(path: str) -> sqlite3.Connection:
-    db = sqlite3.connect(path, timeout=30, detect_types=0)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA foreign_keys = ON")
-    db.execute("PRAGMA journal_mode = WAL")
-    db.execute("PRAGMA busy_timeout = 30000")
-    return db
+def connect(target: str) -> Database:
+    """A SQLite file path or a postgresql:// URL (APP-02)."""
+    return dbapi.connect(target)
 
 
-def get_db() -> sqlite3.Connection:
+def get_db() -> Database:
     if "db" not in g:
         g.db = connect(current_app.config["DATABASE"])
     return g.db
@@ -154,10 +154,16 @@ def close_db(_exc: BaseException | None = None) -> None:
 
 
 def init_db(app: Flask) -> None:
-    db = connect(app.config["DATABASE"])
+    target = app.config["DATABASE"]
+    if dbapi.is_postgres_url(target):
+        from . import migrations as schema_migrations
+
+        schema_migrations.upgrade(target)  # Alembic, under an advisory lock (several replicas may start at once)
+    db = connect(target)
     try:
-        db.executescript(SCHEMA)
-        _migrate(db)
+        if not db.is_postgres:
+            db.raw.executescript(SCHEMA)
+            _migrate(db)
         # Work interrupted by a restart goes back to the queue.
         db.execute("UPDATE resumes SET status = ? WHERE status = ?", (PENDING, PROCESSING))
         db.commit()
@@ -166,7 +172,7 @@ def init_db(app: Flask) -> None:
     app.teardown_appcontext(close_db)
 
 
-def _migrate(db: sqlite3.Connection) -> None:
+def _migrate(db: Database) -> None:
     """Additive migrations for databases created by earlier versions."""
     columns = {row["name"] for row in db.execute("PRAGMA table_info(sessions)")}
     user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
@@ -187,35 +193,35 @@ def _migrate(db: sqlite3.Connection) -> None:
 # Sessions ---------------------------------------------------------------------------------
 
 def create_session(
-    db: sqlite3.Connection, title: str, language: str, vacancies: Iterable[tuple[str, str]],
+    db: Database, title: str, language: str, vacancies: Iterable[tuple[str, str]],
     owner_id: int | None = None,
 ) -> int:
     stamp = now()
     with db:
-        session_id = db.execute(
-            "INSERT INTO sessions (title, language, created_at, updated_at, owner_id) VALUES (?, ?, ?, ?, ?)",
+        session_id = _rowid(db.execute(
+            "INSERT INTO sessions (title, language, created_at, updated_at, owner_id) VALUES (?, ?, ?, ?, ?) RETURNING id",
             (title, language, stamp, stamp, owner_id),
-        ).lastrowid
+        ).fetchone())
         for vacancy_title, text in vacancies:
             db.execute(
                 "INSERT INTO vacancies (session_id, title, text, created_at) VALUES (?, ?, ?, ?)",
                 (session_id, vacancy_title, text, stamp),
             )
-    return _rowid(session_id)
+    return session_id
 
 
-def touch_session(db: sqlite3.Connection, session_id: int) -> None:
+def touch_session(db: Database, session_id: int) -> None:
     db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now(), session_id))
 
 
-def get_session(db: sqlite3.Connection, session_id: int) -> sqlite3.Row | None:
+def get_session(db: Database, session_id: int) -> Any | None:
     return db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
 
 
 ALL_OWNERS = object()  # sentinel: no owner filter (admins)
 
 
-def list_sessions(db: sqlite3.Connection, limit: int = 100, owner_id: Any = ALL_OWNERS) -> list[sqlite3.Row]:
+def list_sessions(db: Database, limit: int = 100, owner_id: Any = ALL_OWNERS) -> list[Any]:
     """Newest first. `owner_id` limits the list to one user's sessions; admins pass ALL_OWNERS."""
     where, params = ("", ()) if owner_id is ALL_OWNERS else ("WHERE s.owner_id = ?", (owner_id,))
     # `where` is one of two fixed literals; the owner id is bound.
@@ -233,31 +239,31 @@ def list_sessions(db: sqlite3.Connection, limit: int = 100, owner_id: Any = ALL_
     ).fetchall()
 
 
-def sessions_not_updated_since(db: sqlite3.Connection, cutoff_iso: str) -> list[sqlite3.Row]:
+def sessions_not_updated_since(db: Database, cutoff_iso: str) -> list[Any]:
     """Sessions whose last change is older than the cutoff (R1 retention)."""
     return db.execute(
         "SELECT id, title, updated_at FROM sessions WHERE updated_at < ? ORDER BY updated_at", (cutoff_iso,)
     ).fetchall()
 
 
-def delete_session(db: sqlite3.Connection, session_id: int) -> bool:
+def delete_session(db: Database, session_id: int) -> bool:
     with db:
         return db.execute("DELETE FROM sessions WHERE id = ?", (session_id,)).rowcount > 0
 
 
 # Vacancies --------------------------------------------------------------------------------
 
-def add_vacancy(db: sqlite3.Connection, session_id: int, title: str, text: str) -> int:
+def add_vacancy(db: Database, session_id: int, title: str, text: str) -> int:
     with db:
-        vacancy_id = db.execute(
-            "INSERT INTO vacancies (session_id, title, text, created_at) VALUES (?, ?, ?, ?)",
+        vacancy_id = _rowid(db.execute(
+            "INSERT INTO vacancies (session_id, title, text, created_at) VALUES (?, ?, ?, ?) RETURNING id",
             (session_id, title, text, now()),
-        ).lastrowid
+        ).fetchone())
         touch_session(db, session_id)
-    return _rowid(vacancy_id)
+    return vacancy_id
 
 
-def delete_vacancy(db: sqlite3.Connection, session_id: int, vacancy_id: int) -> bool:
+def delete_vacancy(db: Database, session_id: int, vacancy_id: int) -> bool:
     """S3: remove one vacancy and its scores (cascade); resumes stay in the session."""
     with db:
         deleted = db.execute("DELETE FROM vacancies WHERE id = ? AND session_id = ?", (vacancy_id, session_id)).rowcount > 0
@@ -266,46 +272,46 @@ def delete_vacancy(db: sqlite3.Connection, session_id: int, vacancy_id: int) -> 
     return deleted
 
 
-def list_vacancies(db: sqlite3.Connection, session_id: int) -> list[sqlite3.Row]:
+def list_vacancies(db: Database, session_id: int) -> list[Any]:
     return db.execute("SELECT * FROM vacancies WHERE session_id = ? ORDER BY id", (session_id,)).fetchall()
 
 
-def get_vacancy(db: sqlite3.Connection, session_id: int, vacancy_id: int) -> sqlite3.Row | None:
+def get_vacancy(db: Database, session_id: int, vacancy_id: int) -> Any | None:
     return db.execute(
         "SELECT * FROM vacancies WHERE id = ? AND session_id = ?", (vacancy_id, session_id)
     ).fetchone()
 
 
-def save_bias_report(db: sqlite3.Connection, vacancy_id: int, report: dict[str, Any]) -> None:
+def save_bias_report(db: Database, vacancy_id: int, report: dict[str, Any]) -> None:
     with db:
         db.execute("UPDATE vacancies SET bias_json = ? WHERE id = ?", (json.dumps(report, ensure_ascii=False), vacancy_id))
 
 
 # Resumes ----------------------------------------------------------------------------------
 
-def resume_exists(db: sqlite3.Connection, session_id: int, sha256: str) -> bool:
+def resume_exists(db: Database, session_id: int, sha256: str) -> bool:
     row = db.execute("SELECT 1 FROM resumes WHERE session_id = ? AND sha256 = ?", (session_id, sha256)).fetchone()
     return row is not None
 
 
 def add_resume(
-    db: sqlite3.Connection, session_id: int, filename: str, sha256: str, text: str, status: str, error: str | None = None
+    db: Database, session_id: int, filename: str, sha256: str, text: str, status: str, error: str | None = None
 ) -> int | None:
     """Insert a resume; returns None if the same file is already in the session."""
-    try:
-        with db:
-            resume_id = db.execute(
-                """INSERT INTO resumes (session_id, filename, sha256, text, status, error, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (session_id, filename, sha256, text, status, error, now()),
-            ).lastrowid
-            touch_session(db, session_id)
-    except sqlite3.IntegrityError:
-        return None
-    return _rowid(resume_id)
+    with db:
+        row = db.execute(
+            """INSERT INTO resumes (session_id, filename, sha256, text, status, error, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (session_id, sha256) DO NOTHING RETURNING id""",
+            (session_id, filename, sha256, text, status, error, now()),
+        ).fetchone()
+        if row is None:
+            return None
+        touch_session(db, session_id)
+    return _rowid(row)
 
 
-def list_resumes(db: sqlite3.Connection, session_id: int) -> list[sqlite3.Row]:
+def list_resumes(db: Database, session_id: int) -> list[Any]:
     return db.execute(
         "SELECT id, filename, status, error, created_at, analyzed_at, profile_json FROM resumes "
         "WHERE session_id = ? ORDER BY id",
@@ -313,16 +319,27 @@ def list_resumes(db: sqlite3.Connection, session_id: int) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def get_resume(db: sqlite3.Connection, resume_id: int) -> sqlite3.Row | None:
+def get_resume(db: Database, resume_id: int) -> Any | None:
     return db.execute("SELECT * FROM resumes WHERE id = ?", (resume_id,)).fetchone()
 
 
-def claim_pending(db: sqlite3.Connection, session_id: int, limit: int = 1000) -> list[int]:
+def claim_pending(db: Database, session_id: int, limit: int = 1000) -> list[int]:
     """Atomically move pending resumes to processing and return their ids.
 
-    BEGIN IMMEDIATE takes the write lock before reading, so two workers claiming at the
-    same time (Q1 worker pool) can never both get the same resume.
+    Two workers claiming at the same time (Q1 worker pool) never get the same resume:
+    PostgreSQL locks the chosen rows (FOR UPDATE SKIP LOCKED: a second worker takes the next
+    ones instead of waiting); SQLite takes the write lock before reading (BEGIN IMMEDIATE).
     """
+    if db.is_postgres:
+        with db:
+            rows = db.execute(
+                """UPDATE resumes SET status = ?, started_at = ? WHERE id IN (
+                       SELECT id FROM resumes WHERE session_id = ? AND status = ?
+                       ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED)
+                   RETURNING id""",
+                (PROCESSING, now(), session_id, PENDING, limit),
+            ).fetchall()
+        return sorted(row[0] for row in rows)
     db.execute("BEGIN IMMEDIATE")
     try:
         ids = [
@@ -342,27 +359,30 @@ def claim_pending(db: sqlite3.Connection, session_id: int, limit: int = 1000) ->
     return ids
 
 
-def sessions_with_pending(db: sqlite3.Connection) -> list[int]:
+def sessions_with_pending(db: Database) -> list[int]:
     """QW-05: sessions that still have resumes waiting for analysis (oldest session first)."""
     return [row["session_id"] for row in db.execute(
         "SELECT DISTINCT session_id FROM resumes WHERE status = ? ORDER BY session_id", (PENDING,))]
 
 
-def average_analysis_seconds(db: sqlite3.Connection, sample: int = 20) -> float | None:
+def average_analysis_seconds(db: Database, sample: int = 20) -> float | None:
     """Mean analysis time of the last `sample` finished resumes in any session (Q1)."""
-    row = db.execute(
-        """
-        SELECT AVG(seconds) AS avg FROM (
-            SELECT (julianday(analyzed_at) - julianday(started_at)) * 86400.0 AS seconds
-            FROM resumes WHERE status = ? AND started_at IS NOT NULL AND analyzed_at IS NOT NULL
-            ORDER BY analyzed_at DESC LIMIT ?)
-        """,
+    rows = db.execute(
+        """SELECT started_at, analyzed_at FROM resumes
+           WHERE status = ? AND started_at IS NOT NULL AND analyzed_at IS NOT NULL
+           ORDER BY analyzed_at DESC LIMIT ?""",
         (DONE, sample),
-    ).fetchone()
-    return row["avg"] if row and row["avg"] is not None else None
+    ).fetchall()
+    seconds = []
+    for row in rows:  # computed here: date arithmetic differs between SQLite and PostgreSQL
+        try:
+            seconds.append((datetime.fromisoformat(row[1]) - datetime.fromisoformat(row[0])).total_seconds())
+        except (TypeError, ValueError):
+            continue
+    return sum(seconds) / len(seconds) if seconds else None
 
 
-def requeue_failed(db: sqlite3.Connection, session_id: int) -> int:
+def requeue_failed(db: Database, session_id: int) -> int:
     with db:
         return db.execute(
             "UPDATE resumes SET status = ?, error = NULL WHERE session_id = ? AND status = ?",
@@ -370,7 +390,7 @@ def requeue_failed(db: sqlite3.Connection, session_id: int) -> int:
         ).rowcount
 
 
-def requeue_unscored(db: sqlite3.Connection, session_id: int) -> int:
+def requeue_unscored(db: Database, session_id: int) -> int:
     """Queue analyzed resumes that are missing a score for some vacancy (e.g. a new vacancy)."""
     with db:
         return db.execute(
@@ -383,7 +403,7 @@ def requeue_unscored(db: sqlite3.Connection, session_id: int) -> int:
         ).rowcount
 
 
-def set_resume_status(db: sqlite3.Connection, resume_id: int, status: str, error: str | None = None) -> None:
+def set_resume_status(db: Database, resume_id: int, status: str, error: str | None = None) -> None:
     with db:
         db.execute(
             "UPDATE resumes SET status = ?, error = ?, analyzed_at = CASE WHEN ? THEN ? ELSE analyzed_at END WHERE id = ?",
@@ -391,14 +411,15 @@ def set_resume_status(db: sqlite3.Connection, resume_id: int, status: str, error
         )
 
 
-def save_profile(db: sqlite3.Connection, resume_id: int, profile: CandidateProfile) -> None:
+def save_profile(db: Database, resume_id: int, profile: CandidateProfile) -> None:
     public = profile.model_dump(exclude={"demographics"})
     with db:
         db.execute(
             "UPDATE resumes SET profile_json = ? WHERE id = ?", (json.dumps(public, ensure_ascii=False), resume_id)
         )
         db.execute(
-            "INSERT OR REPLACE INTO demographics (resume_id, gender, age) VALUES (?, ?, ?)",
+            "INSERT INTO demographics (resume_id, gender, age) VALUES (?, ?, ?) "
+            "ON CONFLICT (resume_id) DO UPDATE SET gender = excluded.gender, age = excluded.age",
             (resume_id, profile.demographics.gender, _age(profile)),
         )
 
@@ -412,12 +433,12 @@ def _age(profile: CandidateProfile) -> int | None:
     return None
 
 
-def load_profile(row: sqlite3.Row) -> CandidateProfile | None:
+def load_profile(row: Any) -> CandidateProfile | None:
     raw = row["profile_json"]
     return CandidateProfile.model_validate_json(raw) if raw else None
 
 
-def unscored_vacancies(db: sqlite3.Connection, resume_id: int) -> list[sqlite3.Row]:
+def unscored_vacancies(db: Database, resume_id: int) -> list[Any]:
     return db.execute(
         """
         SELECT v.* FROM vacancies v JOIN resumes r ON r.session_id = v.session_id
@@ -428,13 +449,16 @@ def unscored_vacancies(db: sqlite3.Connection, resume_id: int) -> list[sqlite3.R
     ).fetchall()
 
 
-def save_scores(db: sqlite3.Connection, resume_id: int, assessments: Iterable[FitAssessment]) -> None:
+def save_scores(db: Database, resume_id: int, assessments: Iterable[FitAssessment]) -> None:
     stamp = now()
     with db:
         # A vacancy deleted while this resume was being scored is skipped (no FK error).
         db.executemany(
-            """INSERT OR REPLACE INTO scores (resume_id, vacancy_id, score, verdict, summary, details_json, created_at)
-               SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM vacancies WHERE id = ?)""",
+            """INSERT INTO scores (resume_id, vacancy_id, score, verdict, summary, details_json, created_at)
+               SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM vacancies WHERE id = ?)
+               ON CONFLICT (resume_id, vacancy_id) DO UPDATE SET
+                 score = excluded.score, verdict = excluded.verdict, summary = excluded.summary,
+                 details_json = excluded.details_json, created_at = excluded.created_at""",
             [
                 (
                     resume_id,
@@ -451,7 +475,7 @@ def save_scores(db: sqlite3.Connection, resume_id: int, assessments: Iterable[Fi
         )
 
 
-def progress(db: sqlite3.Connection, session_id: int) -> dict[str, int]:
+def progress(db: Database, session_id: int) -> dict[str, int]:
     counts = {PENDING: 0, PROCESSING: 0, DONE: 0, PARSE_FAILED: 0, ANALYSIS_FAILED: 0}
     for row in db.execute(
         "SELECT status, COUNT(*) AS n FROM resumes WHERE session_id = ? GROUP BY status", (session_id,)
@@ -463,20 +487,20 @@ def progress(db: sqlite3.Connection, session_id: int) -> dict[str, int]:
 
 # Users and audit log (A1) -------------------------------------------------------------------
 
-def create_user(db: sqlite3.Connection, username: str, password_hash: str, role: str,
+def create_user(db: Database, username: str, password_hash: str, role: str,
                 email: str | None = None) -> int:
     with db:
         return _rowid(db.execute(
-            "INSERT INTO users (username, password_hash, role, created_at, email) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO users (username, password_hash, role, created_at, email) VALUES (?, ?, ?, ?, ?) RETURNING id",
             (username, password_hash, role, now(), email or None),
-        ).lastrowid)
+        ).fetchone())
 
 
-def get_settings(db: sqlite3.Connection) -> dict[str, str]:
+def get_settings(db: Database) -> dict[str, str]:
     return {row["key"]: row["value"] for row in db.execute("SELECT key, value FROM settings")}
 
 
-def save_settings(db: sqlite3.Connection, values: dict[str, str]) -> None:
+def save_settings(db: Database, values: dict[str, str]) -> None:
     stamp = now()
     with db:
         db.executemany(
@@ -486,7 +510,7 @@ def save_settings(db: sqlite3.Connection, values: dict[str, str]) -> None:
         )
 
 
-def resumes_added_since(db: sqlite3.Connection, owner_id: int, since_iso: str) -> int:
+def resumes_added_since(db: Database, owner_id: int, since_iso: str) -> int:
     """S2: resumes accepted for analysis (not parse failures) in the owner's sessions since a time."""
     return int(db.execute(
         """
@@ -502,18 +526,18 @@ def resumes_added_since(db: sqlite3.Connection, owner_id: int, since_iso: str) -
 AI_BIAS_CHECK = "bias_check"
 
 
-def record_llm_use(db: sqlite3.Connection, user_id: int | None, kind: str) -> None:
+def record_llm_use(db: Database, user_id: int | None, kind: str) -> None:
     with db:
         db.execute("INSERT INTO llm_usage (user_id, kind, created_at) VALUES (?, ?, ?)", (user_id, kind, now()))
 
 
-def llm_uses_since(db: sqlite3.Connection, user_id: int, kind: str, since_iso: str) -> int:
+def llm_uses_since(db: Database, user_id: int, kind: str, since_iso: str) -> int:
     return int(db.execute(
         "SELECT COUNT(*) FROM llm_usage WHERE user_id = ? AND kind = ? AND created_at >= ?", (user_id, kind, since_iso)
     ).fetchone()[0])
 
 
-def get_user(db: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
+def get_user(db: Database, user_id: int) -> Any | None:
     return db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
 
 
@@ -523,7 +547,7 @@ CANDIDATE_STATUSES = ("new", "shortlist", "interview", "offer", "rejected")
 MAX_NOTE = 500
 
 
-def set_candidate_status(db: sqlite3.Connection, vacancy_id: int, resume_id: int, status: str, note: str,
+def set_candidate_status(db: Database, vacancy_id: int, resume_id: int, status: str, note: str,
                          user_id: int | None) -> None:
     """Status of one candidate for one vacancy (a person can be shortlisted for one vacancy
     and rejected for another). "new" with an empty note removes the row: that is the default."""
@@ -544,29 +568,30 @@ def set_candidate_status(db: sqlite3.Connection, vacancy_id: int, resume_id: int
             )
 
 
-def is_scored(db: sqlite3.Connection, vacancy_id: int, resume_id: int) -> bool:
+def is_scored(db: Database, vacancy_id: int, resume_id: int) -> bool:
     return db.execute("SELECT 1 FROM scores WHERE vacancy_id = ? AND resume_id = ?", (vacancy_id, resume_id)).fetchone() is not None
 
 
-def email_taken(db: sqlite3.Connection, email: str) -> bool:
+def email_taken(db: Database, email: str) -> bool:
     """SIS 10-11: one account per email (case-insensitive), so usage stats count real people."""
     return db.execute("SELECT 1 FROM users WHERE lower(email) = lower(?) LIMIT 1", (email,)).fetchone() is not None
 
 
-def get_user_by_name(db: sqlite3.Connection, username: str) -> sqlite3.Row | None:
-    return db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+def get_user_by_name(db: Database, username: str) -> Any | None:
+    # Usernames are unique ignoring case (SQLite: COLLATE NOCASE, PostgreSQL: unique index on lower()).
+    return db.execute("SELECT * FROM users WHERE lower(username) = lower(?)", (username,)).fetchone()
 
 
-def list_users(db: sqlite3.Connection) -> list[sqlite3.Row]:
+def list_users(db: Database) -> list[Any]:
     return db.execute(
         """
         SELECT u.*, (SELECT COUNT(*) FROM sessions s WHERE s.owner_id = u.id) AS session_count
-        FROM users u ORDER BY u.username COLLATE NOCASE
+        FROM users u ORDER BY lower(u.username)
         """
     ).fetchall()
 
 
-def update_user(db: sqlite3.Connection, user_id: int, **fields: Any) -> None:
+def update_user(db: Database, user_id: int, **fields: Any) -> None:
     allowed = {"password_hash", "role", "active", "last_login_at", "totp_secret", "totp_last_step", "recovery_codes"}
     items = [(k, v) for k, v in fields.items() if k in allowed]
     if not items:
@@ -579,7 +604,7 @@ def update_user(db: sqlite3.Connection, user_id: int, **fields: Any) -> None:
 
 # SEC-01: password reset links ------------------------------------------------------------------
 
-def create_password_reset(db: sqlite3.Connection, token_hash: str, user_id: int, created_by: int | None,
+def create_password_reset(db: Database, token_hash: str, user_id: int, created_by: int | None,
                           expires_at: str) -> None:
     with db:
         # One valid link per user: a new link replaces older unused ones.
@@ -590,7 +615,7 @@ def create_password_reset(db: sqlite3.Connection, token_hash: str, user_id: int,
         )
 
 
-def get_password_reset(db: sqlite3.Connection, token_hash: str) -> sqlite3.Row | None:
+def get_password_reset(db: Database, token_hash: str) -> Any | None:
     """An unused, unexpired reset link."""
     return db.execute(
         "SELECT * FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
@@ -598,7 +623,7 @@ def get_password_reset(db: sqlite3.Connection, token_hash: str) -> sqlite3.Row |
     ).fetchone()
 
 
-def use_password_reset(db: sqlite3.Connection, token_hash: str, password_hash: str) -> bool:
+def use_password_reset(db: Database, token_hash: str, password_hash: str) -> bool:
     """Set the new password and burn the link in one transaction; False if it was already used."""
     with db:
         row = db.execute(
@@ -612,7 +637,7 @@ def use_password_reset(db: sqlite3.Connection, token_hash: str, password_hash: s
     return True
 
 
-def audit(db: sqlite3.Connection, action: str, user: sqlite3.Row | None = None, session_id: int | None = None,
+def audit(db: Database, action: str, user: Any | None = None, session_id: int | None = None,
           detail: str | None = None, username: str | None = None) -> None:
     with db:
         db.execute(
@@ -622,13 +647,14 @@ def audit(db: sqlite3.Connection, action: str, user: sqlite3.Row | None = None, 
         )
 
 
-def audit_once(db: sqlite3.Connection, action: str, user: sqlite3.Row | None, session_id: int | None,
+def audit_once(db: Database, action: str, user: Any | None, session_id: int | None,
                detail: str | None, minutes: int = 10) -> bool:
     """SIS 10-11 fix: log a view only if the same user has not logged the same view in the
     last `minutes`; refreshes and filter clicks no longer flood the audit log."""
     since = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat(timespec="seconds")
     seen = db.execute(
-        "SELECT 1 FROM audit_log WHERE action = ? AND user_id IS ? AND session_id IS ? AND detail IS ? AND created_at >= ? LIMIT 1",
+        "SELECT 1 FROM audit_log WHERE action = ? AND user_id IS NOT DISTINCT FROM ? AND session_id IS NOT DISTINCT FROM ? "
+        "AND detail IS NOT DISTINCT FROM ? AND created_at >= ? LIMIT 1",
         (action, user["id"] if user else None, session_id, detail, since),
     ).fetchone()
     if seen is None:
@@ -636,5 +662,5 @@ def audit_once(db: sqlite3.Connection, action: str, user: sqlite3.Row | None, se
     return seen is None
 
 
-def list_audit(db: sqlite3.Connection, limit: int = 200) -> list[sqlite3.Row]:
+def list_audit(db: Database, limit: int = 200) -> list[Any]:
     return db.execute("SELECT * FROM audit_log ORDER BY created_at DESC, id DESC LIMIT ?", (limit,)).fetchall()

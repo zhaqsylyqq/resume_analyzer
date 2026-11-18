@@ -159,6 +159,7 @@ CI also runs lint, type and coverage checks. Run them locally before pushing:
 ruff check .            # lint (security rules included)
 mypy                    # types for app/ and scripts/
 pytest -q --cov         # tests; fails if coverage of app/ drops below 90 %
+TEST_DATABASE_URL=postgresql://postgres:pw@localhost:5432/hrscreen_test pytest -q   # same suite on PostgreSQL (wipes that database)
 pre-commit install      # optional: run ruff and mypy on every commit
 ```
 
@@ -173,13 +174,14 @@ replaced by a default. Check the configuration without starting anything:
 python -m app.check_config      # prints every setting, secrets only as "set" / "not set"
 ```
 
-Secrets (`FLASK_SECRET_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `INVITE_CODE`, `BACKUP_KEY`) can also be
+Secrets (`FLASK_SECRET_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `INVITE_CODE`, `BACKUP_KEY`, `DATABASE_URL`) can also be
 read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kubernetes secrets).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `APP_ENV` | `development` | `production` makes the AI key and HTTPS-only cookies mandatory and never generates a new session secret; `development`, `test` |
 | `DATA_DIR` | `instance/` | Folder for the SQLite database and the generated session secret |
+| `DATABASE_URL` | empty (SQLite) | `postgresql://user:password@host:5432/db`: use PostgreSQL; the schema is migrated at start-up (Alembic). Shown in reports with the password masked |
 | `ADMIN_MFA_REQUIRED` | `0` | `1` = admins must switch on two-factor sign-in before using the app |
 | `SHUTDOWN_TIMEOUT` | `25` | Seconds a stopping server waits for resumes being analyzed (keep below the orchestrator's grace period) |
 | `LLM_PROVIDER` | `gemini` | AI provider: `deepseek` or `gemini` |
@@ -218,6 +220,7 @@ read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kube
 | Same, only when the USB drive is in and the copy is old (scheduled task) | `flask --app app backup-auto` |
 | Prove a copy can be restored | `flask --app app restore-check [FILE] [--restore-to PATH]` |
 | Check the live database and the queue | `flask --app app db-check` |
+| Apply PostgreSQL migrations | `flask --app app db-upgrade` (also automatic at start-up) |
 | New backup key | `flask --app app generate-backup-key` |
 | Switch off 2FA for a locked-out user | `flask --app app reset-2fa USER` |
 | One-time password reset link | `flask --app app reset-link USER [--base-url URL]` |

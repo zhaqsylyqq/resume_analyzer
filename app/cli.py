@@ -28,11 +28,16 @@ from flask import Flask, current_app
 from flask.cli import with_appcontext
 
 from .services import backup as backups
+from .services import db as dbapi
 from .services import storage
 
 
 def _database() -> Path:
-    return Path(current_app.config["DATABASE"])
+    """The SQLite file. File backups do not apply to PostgreSQL (pg_dump copies come with APP-03)."""
+    target = current_app.config["DATABASE"]
+    if dbapi.is_postgres_url(target):
+        raise click.ClickException("the database is PostgreSQL: file backups are for SQLite; use pg_dump (APP-03)")
+    return Path(target)
 
 
 def _offsite_dir(out: Path | None) -> Path:
@@ -105,20 +110,28 @@ def restore_check_command(file: Path | None, restore_to: Path | None) -> None:
 @with_appcontext
 def db_check_command() -> None:
     """Integrity check of the live database, row counts and the analysis queue."""
-    path = _database()
-    if not path.is_file():
-        raise click.ClickException(f"database not found: {path}")
-    db = storage.connect(str(path))
+    target = current_app.config["DATABASE"]
+    postgres = dbapi.is_postgres_url(target)
+    if not postgres and not Path(target).is_file():
+        raise click.ClickException(f"database not found: {target}")
+    db = storage.connect(target)
     try:
-        result = db.execute("PRAGMA integrity_check").fetchone()[0]
-        if result != "ok":
-            raise click.ClickException(f"integrity check failed: {result}")
+        if postgres:
+            from .services import migrations
+
+            revision = migrations.current(target)
+            label = f"PostgreSQL {dbapi.redact_url(target)}, schema {revision or 'not migrated'}"
+        else:
+            result = db.execute("PRAGMA integrity_check").fetchone()[0]
+            if result != "ok":
+                raise click.ClickException(f"integrity check failed: {result}")
+            label = f"{target} ({Path(target).stat().st_size // 1024} KB), integrity ok"
         counts = {t: db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in backups.TABLES}  # noqa: S608 - fixed names
         statuses = dict(db.execute("SELECT status, COUNT(*) FROM resumes GROUP BY status").fetchall())
         waiting = len(storage.sessions_with_pending(db))
     finally:
         db.close()
-    click.echo(f"Database: {path} ({path.stat().st_size // 1024} KB), integrity ok")
+    click.echo(f"Database: {label}")
     click.echo("Rows: " + ", ".join(f"{k} {v}" for k, v in counts.items()))
     click.echo("Resumes by status: " + (", ".join(f"{k} {v}" for k, v in sorted(statuses.items())) or "none"))
     click.echo(f"Sessions waiting for analysis: {waiting}")
@@ -214,6 +227,20 @@ def backup_auto_command(max_age_hours: int, remind_days: int, keep: int) -> None
         raise SystemExit(1)
 
 
+@click.command("db-upgrade")
+@with_appcontext
+def db_upgrade_command() -> None:
+    """Apply PostgreSQL schema migrations (also done at start-up). Nothing to do for SQLite."""
+    target = current_app.config["DATABASE"]
+    if not dbapi.is_postgres_url(target):
+        click.echo("SQLite: the schema is built in; nothing to migrate.")
+        return
+    from .services import migrations
+
+    migrations.upgrade(target)
+    click.echo(f"Schema at revision {migrations.current(target)}.")
+
+
 @click.command("generate-backup-key")
 def generate_backup_key_command() -> None:
     """Print a new BACKUP_KEY. Keep it in a password manager shared by two people."""
@@ -230,5 +257,6 @@ def config_check_command() -> None:
 
 def init_cli(app: Flask) -> None:
     for command in (backup_command, backup_offsite_command, backup_auto_command, restore_check_command, db_check_command,
+                    db_upgrade_command,
                     generate_backup_key_command, config_check_command):
         app.cli.add_command(command)

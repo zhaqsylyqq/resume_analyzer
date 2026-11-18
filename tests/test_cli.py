@@ -24,6 +24,7 @@ def test_commands_are_registered(app):
             "config-check", "purge-old", "create-admin"} <= names
 
 
+@pytest.mark.sqlite_only
 def test_backup_into_default_folder(app, runner, tmp_path, monkeypatch):
     monkeypatch.setattr(app, "instance_path", str(tmp_path))  # never the developer's real instance/
     result = runner.invoke(args=["backup"])
@@ -32,6 +33,7 @@ def test_backup_into_default_folder(app, runner, tmp_path, monkeypatch):
     assert list((Path(app.instance_path) / "backups").glob("app-*.db"))
 
 
+@pytest.mark.sqlite_only
 def test_backup_reports_a_missing_database(app, runner, tmp_path):
     app.config["DATABASE"] = str(tmp_path / "missing.db")
     result = runner.invoke(args=["backup", "--out", str(tmp_path / "out")])
@@ -39,6 +41,7 @@ def test_backup_reports_a_missing_database(app, runner, tmp_path):
     assert "backup failed: database not found" in result.output
 
 
+@pytest.mark.sqlite_only
 def test_offsite_backup_and_restore_check(app, runner, tmp_path):
     out = tmp_path / "offsite"
     out.mkdir()
@@ -66,6 +69,7 @@ def test_offsite_needs_folder_and_valid_key(app, runner, tmp_path):
     assert result.exit_code == 1 and "no encrypted copies found" in result.output
 
 
+@pytest.mark.sqlite_only
 def test_restore_check_with_the_wrong_key(app, runner, tmp_path):
     app.config.update(BACKUP_OFFSITE_DIR=str(tmp_path), BACKUP_KEY=backups.generate_key())
     assert runner.invoke(args=["backup-offsite"]).exit_code == 0
@@ -79,7 +83,7 @@ def test_db_check(app, runner, client, csrf, fake_gemini):
     upload(client, csrf, session_id, [("a.txt", resume_text(1))])
     result = runner.invoke(args=["db-check"])
     assert result.exit_code == 0, result.output
-    assert "integrity ok" in result.output
+    assert "integrity ok" in result.output or "schema 0001_initial" in result.output
     assert "sessions 1" in result.output and "resumes 1" in result.output
     assert "Resumes by status: done 1" in result.output
     assert "Sessions waiting for analysis: 0" in result.output
@@ -114,6 +118,7 @@ def _auto(app, configured, state, **kw):
                                    max_age=timedelta(hours=20), remind_after=timedelta(days=3), **kw)
 
 
+@pytest.mark.sqlite_only
 def test_auto_backup_when_drive_is_connected_then_skips_while_fresh(app, runner, tmp_path):
     key = backups.load_key(backups.generate_key())
     drive, state = tmp_path / "usb" / "hrscreen-backups", tmp_path / "state"
@@ -125,6 +130,7 @@ def test_auto_backup_when_drive_is_connected_then_skips_while_fresh(app, runner,
     assert second.status == "fresh" and len(backups.list_backups(drive)) == 1
 
 
+@pytest.mark.sqlite_only
 def test_auto_backup_finds_the_drive_under_another_letter(app, runner, tmp_path):
     key = backups.load_key(backups.generate_key())
     other_root = tmp_path / "E"
@@ -147,6 +153,7 @@ def test_auto_backup_reminds_when_absent_too_long(app, runner, tmp_path):
     assert _auto(app, missing, state, key=key, now=NOW, drives=[]).remind
 
 
+@pytest.mark.sqlite_only
 def test_auto_backup_reports_a_failure(app, runner, tmp_path):
     key = backups.load_key(backups.generate_key())
     drive = tmp_path / "usb"
@@ -156,6 +163,7 @@ def test_auto_backup_reports_a_failure(app, runner, tmp_path):
     assert result.status == "failed" and result.remind
 
 
+@pytest.mark.sqlite_only
 def test_backup_auto_command_logs_and_notifies_once_a_day(app, runner, tmp_path, monkeypatch):
     shown = []
     monkeypatch.setattr("app.cli.notify_windows", lambda title, text: shown.append((title, text)) or True)
