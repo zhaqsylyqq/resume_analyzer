@@ -10,6 +10,10 @@ from app import create_app
 # APP-02: TEST_DATABASE_URL=postgresql://… runs the whole suite on PostgreSQL (CI does both).
 # The database is wiped: never point it at real data.
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
+# A developer's .env may point DATABASE_URL at the live PostgreSQL database (the laptop does).
+# Tests must never touch it: empty values win over .env (python-dotenv never overrides them).
+for _name in ("DATABASE_URL", "DATABASE_URL_FILE", "BACKUP_RESTORE_URL", "BACKUP_RESTORE_URL_FILE"):
+    os.environ[_name] = ""
 ON_POSTGRES = bool(TEST_DATABASE_URL)
 PG_TABLES = ("password_resets", "llm_usage", "candidate_status", "audit_log", "settings", "scores",
              "demographics", "resumes", "vacancies", "sessions", "users")
