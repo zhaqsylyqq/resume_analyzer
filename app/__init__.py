@@ -5,12 +5,12 @@ import logging
 import os
 from typing import Any
 
-import click
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException
 
 from .auth import init_auth
+from .cli import init_cli
 from .config import load_secret_key, load_settings
 from .i18n import init_i18n, translate
 from .retention import init_retention
@@ -47,16 +47,8 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
     init_retention(app)
     _register_blueprints(app)
     _register_error_handlers(app)
-    app.cli.add_command(config_check)
+    init_cli(app)
     return app
-
-
-@click.command("config-check")
-def config_check() -> None:
-    """Validate the configuration and print it (secrets shown only as set / not set)."""
-    from .check_config import main
-
-    raise SystemExit(main())
 
 
 def create_server_app() -> Flask:

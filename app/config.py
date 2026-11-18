@@ -4,7 +4,7 @@ All settings come from the environment (or `.env`, loaded by create_app). They a
 into one typed object, checked once at start-up, and a bad value stops the app with a list
 of every problem instead of being silently replaced by a default.
 
-Secrets can also come from files: `FLASK_SECRET_KEY_FILE=/run/secrets/flask_key` reads the
+Secrets (SECRET_NAMES) can also come from files: `FLASK_SECRET_KEY_FILE=/run/secrets/flask_key` reads the
 key from that file. Docker and Kubernetes mount secrets this way, so they never appear in
 `docker inspect` or in the process environment.
 
@@ -26,7 +26,7 @@ from typing import Any
 
 ENVIRONMENTS = ("development", "production", "test")
 PROVIDERS = ("gemini", "deepseek")
-SECRET_NAMES = ("FLASK_SECRET_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "INVITE_CODE")
+SECRET_NAMES = ("FLASK_SECRET_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "INVITE_CODE", "BACKUP_KEY")
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off", ""}
 
@@ -74,6 +74,9 @@ class Settings:
     # APP-08: seconds a stopping server waits for resumes being analyzed (keep below the
     # orchestrator's grace period: Docker 10 s by default, Kubernetes 30 s)
     shutdown_timeout: int = 25
+    # QW-01 / APP-09: encrypted copies go to this folder outside the host, sealed with this key
+    backup_offsite_dir: str = ""
+    backup_key: str = ""
     # Sources of secrets read from *_FILE, for the config report (never the values)
     secret_sources: dict[str, str] = field(default_factory=dict)
 
@@ -103,6 +106,8 @@ class Settings:
             "STATS_UTC_OFFSET": self.stats_utc_offset,
             "TRUSTED_PROXIES": self.trusted_proxies,
             "SHUTDOWN_TIMEOUT": self.shutdown_timeout,
+            "BACKUP_OFFSITE_DIR": self.backup_offsite_dir,
+            "BACKUP_KEY": self.backup_key,
             # Uploads
             "MAX_FILES_PER_BATCH": 50,
             "MAX_FILE_BYTES": 5 * 1024 * 1024,
@@ -243,11 +248,20 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         flask_secret_key=r.secret("FLASK_SECRET_KEY"),
         data_dir=r.text("DATA_DIR"),
         shutdown_timeout=r.integer("SHUTDOWN_TIMEOUT", 25, minimum=0, maximum=600),
+        backup_offsite_dir=r.text("BACKUP_OFFSITE_DIR"),
+        backup_key=r.secret("BACKUP_KEY"),
         secret_sources=r.secret_sources,
     )
 
     if settings.deepseek_base_url and not settings.deepseek_base_url.startswith("https://"):
         r.problems.append("DEEPSEEK_BASE_URL must start with https://")
+    if settings.backup_key:
+        from .services.backup import BackupError, load_key
+
+        try:
+            load_key(settings.backup_key)
+        except BackupError as exc:
+            r.problems.append(str(exc))
     if settings.flask_secret_key and len(settings.flask_secret_key) < 32:
         r.problems.append("FLASK_SECRET_KEY is too short (use at least 32 characters, e.g. 64 hex digits)")
     if production:

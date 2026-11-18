@@ -173,7 +173,7 @@ replaced by a default. Check the configuration without starting anything:
 python -m app.check_config      # prints every setting, secrets only as "set" / "not set"
 ```
 
-Secrets (`FLASK_SECRET_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `INVITE_CODE`) can also be
+Secrets (`FLASK_SECRET_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `INVITE_CODE`, `BACKUP_KEY`) can also be
 read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kubernetes secrets).
 
 | Variable | Default | Purpose |
@@ -196,8 +196,8 @@ read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kube
 | `INVITE_CODE` | empty | Initial invite code; until an admin saves the registration settings, a non-empty code opens sign-up with this code |
 | `DAILY_RESUME_LIMIT` | `30` | Initial limit of resumes per recruiter per 24 hours (0 = none); admins change it in the app |
 | `DAILY_AI_CHECK_LIMIT` | `20` | Initial limit of AI vacancy checks per recruiter per 24 hours (0 = none); the dictionary check always runs; admins change it in the app |
-| `BACKUP_OFFSITE_DIR` | empty | Folder outside this disk for encrypted backups (`scripts/backup_offsite.py`) |
-| `BACKUP_KEY` | empty | Key for encrypted backups; create with `python scripts/backup_offsite.py --generate-key` |
+| `BACKUP_OFFSITE_DIR` | empty | Folder outside this disk for encrypted backups (`flask --app app backup-offsite`) |
+| `BACKUP_KEY` | empty | Key for encrypted backups (checked at start-up); create with `flask --app app generate-backup-key` |
 | `STATS_UTC_OFFSET` | `5` | Hours added to UTC when statistics group events by day (Kazakhstan: 5) |
 | `STARTER_SESSION` | `1` | Give every new user an example session with a Python vacancy (`0` = off) |
 | `TRUSTED_PROXIES` | `127.0.0.1,::1` | Peers allowed to pass the visitor IP (`CF-Connecting-IP` / `X-Forwarded-For`) and the scheme (`X-Forwarded-Proto`); needed for rate limits and HSTS behind Cloudflare Tunnel |
@@ -212,12 +212,24 @@ read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kube
 | Run (dev) | `flask --app app run --debug` |
 | Create an admin | `flask --app app create-admin` |
 | Delete old sessions now | `flask --app app purge-old [--days N]` |
-| Back up the database | `python scripts/backup_db.py [--out DIR] [--keep N]` |
+| Back up the database | `flask --app app backup [--out DIR] [--keep N]` |
+| Encrypted copy outside this disk | `flask --app app backup-offsite [--out DIR] [--keep N]` |
+| Prove a copy can be restored | `flask --app app restore-check [FILE] [--restore-to PATH]` |
+| Check the live database and the queue | `flask --app app db-check` |
+| New backup key | `flask --app app generate-backup-key` |
+| Check the configuration | `python -m app.check_config` (or `flask --app app config-check`) |
 | Run (production) | `waitress-serve --host 0.0.0.0 --port 8000 --call app:create_server_app` |
 | Tests | `pytest -q` (Gemini is mocked, no key needed) |
 | Lint and types | `ruff check .` and `mypy` |
 | Smoke test | `python scripts/smoke_test.py [--pipeline \| --bias \| --list-models]` |
 | Regenerate samples | `python scripts/make_samples.py` |
+
+Service commands (APP-09) read the same validated configuration as the server, so
+`DATA_DIR`, `*_FILE` secrets and the production rules apply to them too. Every one exits
+with code 0 on success and 1 with a one-line reason otherwise. In Docker run them in the
+container, e.g. `docker compose -f deploy/docker-compose.yml exec app flask --app app backup`.
+`scripts/backup_db.py`, `backup_offsite.py` and `restore_check.py` still work (the scheduled
+task uses them); they now call the same code in `app/services/backup.py`.
 
 ## API usage (keeping the AI bill small)
 
