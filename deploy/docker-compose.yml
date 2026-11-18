@@ -17,6 +17,8 @@ services:
     volumes:
       - app-data:/app/instance
     restart: unless-stopped
+    # APP-08: time to finish resumes in analysis on `docker compose down` (SHUTDOWN_TIMEOUT=25)
+    stop_grace_period: 30s
 
   tunnel:
     image: cloudflare/cloudflared:2026.10.7

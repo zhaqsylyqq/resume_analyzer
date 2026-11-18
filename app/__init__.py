@@ -69,7 +69,41 @@ def create_server_app() -> Flask:
 
     app = create_app()
     jobs.resume_pending(app)
+    install_shutdown_handlers(app)
     return app
+
+
+def install_shutdown_handlers(app: Flask) -> list[int]:
+    """APP-08: on SIGTERM (docker stop, Kubernetes) or Ctrl+C, finish the resumes being analyzed
+    (up to SHUTDOWN_TIMEOUT seconds), then stop. /readyz answers 503 from the first moment.
+
+    Returns the signals handled. Signal handlers can only be set from the main thread; waitress
+    calls the app factory there, other callers (tests, `flask run` reloader) are left alone.
+    """
+    import signal
+    import threading
+
+    from .services import jobs
+
+    if threading.current_thread() is not threading.main_thread():
+        return []
+    timeout = app.config["SHUTDOWN_TIMEOUT"]
+    log = logging.getLogger("app.shutdown")
+
+    def handle(signum: int, _frame: Any) -> None:
+        log.info("Received %s: finishing analysis in progress (up to %ss) before stopping",
+                 signal.Signals(signum).name, timeout)
+        jobs.drain(timeout)
+        log.info("Stopped cleanly")
+        raise SystemExit(0) if signum == signal.SIGTERM else KeyboardInterrupt
+
+    handled = []
+    for name in ("SIGTERM", "SIGINT", "SIGBREAK"):  # SIGBREAK: Ctrl+Break on Windows
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            signal.signal(sig, handle)
+            handled.append(int(sig))
+    return handled
 
 
 def _register_blueprints(app: Flask) -> None:

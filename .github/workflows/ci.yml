@@ -86,8 +86,13 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:8000/healthz
+          curl -fsS http://127.0.0.1:8000/readyz
           test "$(docker exec smoke id -u)" = "10001"
-          docker rm -f smoke
+          # APP-08: SIGTERM must stop the app cleanly (exit code 0) well within the grace period
+          docker stop -t 30 smoke
+          test "$(docker inspect -f '{{.State.ExitCode}}' smoke)" = "0"
+          docker logs smoke 2>&1 | grep -q "Stopped cleanly"
+          docker rm smoke
       - name: Trivy image scan (fixed HIGH/CRITICAL)
         id: trivy
         continue-on-error: ${{ env.REPORT_ONLY == 'true' }}

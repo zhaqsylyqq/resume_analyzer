@@ -53,7 +53,7 @@ ROLES = ("recruiter", "admin")
 USERNAME_RE = re.compile(r"^[\w.\-]{3,64}$", re.UNICODE)
 MIN_PASSWORD = 10
 SESSION_LIFETIME = timedelta(hours=12)
-PUBLIC_ENDPOINTS = frozenset({"auth.login", "auth.register", "core.health", "core.set_language", "static"})
+PUBLIC_ENDPOINTS = frozenset({"auth.login", "auth.register", "core.health", "core.ready", "core.set_language", "static"})
 
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
 MAX_EMAIL = 254

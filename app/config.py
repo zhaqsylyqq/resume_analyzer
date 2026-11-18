@@ -71,6 +71,9 @@ class Settings:
     flask_secret_key: str = ""
     # Where the SQLite database and the generated secret live; default: Flask's instance folder
     data_dir: str = ""
+    # APP-08: seconds a stopping server waits for resumes being analyzed (keep below the
+    # orchestrator's grace period: Docker 10 s by default, Kubernetes 30 s)
+    shutdown_timeout: int = 25
     # Sources of secrets read from *_FILE, for the config report (never the values)
     secret_sources: dict[str, str] = field(default_factory=dict)
 
@@ -99,6 +102,7 @@ class Settings:
             "STARTER_SESSION": self.starter_session,
             "STATS_UTC_OFFSET": self.stats_utc_offset,
             "TRUSTED_PROXIES": self.trusted_proxies,
+            "SHUTDOWN_TIMEOUT": self.shutdown_timeout,
             # Uploads
             "MAX_FILES_PER_BATCH": 50,
             "MAX_FILE_BYTES": 5 * 1024 * 1024,
@@ -238,6 +242,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         session_cookie_secure=r.boolean("SESSION_COOKIE_SECURE", production),
         flask_secret_key=r.secret("FLASK_SECRET_KEY"),
         data_dir=r.text("DATA_DIR"),
+        shutdown_timeout=r.integer("SHUTDOWN_TIMEOUT", 25, minimum=0, maximum=600),
         secret_sources=r.secret_sources,
     )
 

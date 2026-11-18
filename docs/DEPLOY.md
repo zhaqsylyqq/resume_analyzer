@@ -76,7 +76,7 @@ Members) to manage DNS and the tunnel directly.
 ## Done when
 
 - https://hrscreen.date answers with the laptop off.
-- Without signing in, only `/login`, `/register` (when open) and `/healthz` are reachable.
+- Without signing in, only `/login`, `/register` (when open), `/healthz` and `/readyz` are reachable.
 - A batch of the sample resumes completes.
 - Data survives `docker compose restart` and a server reboot.
 - `PROGRESS.md` records the server, its cost and how to reach the logs.

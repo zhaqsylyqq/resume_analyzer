@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -44,6 +45,35 @@ _lock = threading.Lock()
 _rotation: deque[int] = deque()  # sessions with pending resumes, next turn first
 _batches: dict[int, _Batch] = {}  # sessions that are running (queued or in flight)
 _workers = 0
+_draining = threading.Event()  # APP-08: set on shutdown; workers stop after the resume in hand
+
+
+def is_draining() -> bool:
+    return _draining.is_set()
+
+
+def drain(timeout: float) -> bool:
+    """APP-08: stop taking new resumes and wait for the ones being analyzed.
+
+    Returns True when nothing is in flight any more, False when `timeout` seconds passed first.
+    Resumes not started yet stay pending in the database; the next start resumes them (QW-05).
+    A resume cut off by a hard kill is moved back to pending by storage.init_db.
+    """
+    _draining.set()
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        with _lock:
+            busy = sum(b.in_flight for b in _batches.values())
+        if busy == 0:
+            return True
+        if time.monotonic() >= deadline:
+            log.warning("Shutdown: %d resume(s) still being analyzed after %ss; they will be retried", busy, timeout)
+            return False
+        time.sleep(0.1)
+
+
+def _reset_for_tests() -> None:
+    _draining.clear()
 
 
 def is_running(session_id: int) -> bool:
@@ -55,6 +85,9 @@ def start(session_id: int) -> bool:
     """Queue a session for analysis; returns False if it was already queued."""
     app = current_app._get_current_object()  # type: ignore[attr-defined]
     service = get_gemini()
+    if _draining.is_set():
+        # Shutting down: the resumes are already saved as pending and run after the restart.
+        return False
     with _lock:
         added = session_id not in _rotation
         if added:
@@ -130,7 +163,7 @@ def _worker(app: Flask, service: GeminiService) -> None:
 def _work_once(app: Flask, service: GeminiService, db) -> bool:
     """Analyze one resume of the next session in the rotation; False when idle."""
     with _lock:
-        if not _rotation:
+        if not _rotation or _draining.is_set():
             return False
         session_id = _rotation[0]
         _rotation.rotate(-1)  # this session goes to the back: the others get the next turns

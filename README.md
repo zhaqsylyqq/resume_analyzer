@@ -180,6 +180,7 @@ read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kube
 |----------|---------|---------|
 | `APP_ENV` | `development` | `production` makes the AI key and HTTPS-only cookies mandatory and never generates a new session secret; `development`, `test` |
 | `DATA_DIR` | `instance/` | Folder for the SQLite database and the generated session secret |
+| `SHUTDOWN_TIMEOUT` | `25` | Seconds a stopping server waits for resumes being analyzed (keep below the orchestrator's grace period) |
 | `LLM_PROVIDER` | `gemini` | AI provider: `deepseek` or `gemini` |
 | `DEEPSEEK_API_KEY` | — (required for DeepSeek) | DeepSeek API key |
 | `DEEPSEEK_MODEL` | `deepseek-flash` | DeepSeek model (thinking mode is switched off to save tokens) |
@@ -295,7 +296,9 @@ Open <http://127.0.0.1:8000> and sign in.
 
 - The image runs as the non-root user `app` with
   [waitress](https://docs.pylonsproject.org/projects/waitress/) on port 8000 and has a
-  health check on `/healthz` (`docker ps` shows `healthy`).
+  health check on `/healthz` (`docker ps` shows `healthy`). `/readyz` answers 503 while the
+  database is unavailable or the server is stopping; `docker stop -t 30` lets the analysis in
+  progress finish (APP-08).
 - The SQLite database, the generated session secret and backups live in the
   `/app/instance` volume, so data survives `docker restart` and replacing the container
   with a new image (`docker rm -f enbek` + the same `docker run`).
@@ -352,7 +355,7 @@ issues in [`PROGRESS.md`](PROGRESS.md).
 ## Security and privacy
 
 - Secrets only from the environment; the key is never logged or printed.
-- Login required on every page except `/login` and `/healthz`. Passwords are hashed with
+- Login required on every page except `/login`, `/healthz` and `/readyz`. Passwords are hashed with
   Argon2id; failed logins are limited (5 per 15 minutes per username and per IP); the
   session is renewed on login and expires after 12 hours. Recruiters see only their own
   sessions (other sessions answer 404); admins see all and manage users. Opening,
