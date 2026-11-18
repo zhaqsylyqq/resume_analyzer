@@ -104,7 +104,7 @@ def test_retention_setting_from_environment(monkeypatch):
 
     monkeypatch.setenv("RETENTION_DAYS", "30")
     assert settings_from_env()["RETENTION_DAYS"] == 30
-    monkeypatch.setenv("RETENTION_DAYS", "-5")
+    monkeypatch.setenv("RETENTION_DAYS", "0")
     assert settings_from_env()["RETENTION_DAYS"] == 0
     monkeypatch.delenv("RETENTION_DAYS")
     assert settings_from_env()["RETENTION_DAYS"] == 90

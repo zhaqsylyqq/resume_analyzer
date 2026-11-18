@@ -5,12 +5,13 @@ import logging
 import os
 from typing import Any
 
+import click
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException
 
 from .auth import init_auth
-from .config import load_secret_key, settings_from_env
+from .config import load_secret_key, load_settings
 from .i18n import init_i18n, translate
 from .retention import init_retention
 from .security import init_security
@@ -18,16 +19,22 @@ from .services import storage
 
 
 def create_app(overrides: dict[str, Any] | None = None) -> Flask:
+    """Build the app. Raises ConfigError (listing every bad setting) before anything starts."""
     load_dotenv()
-    app = Flask(__name__, instance_relative_config=True)
+    settings = load_settings()
+    app = Flask(__name__, instance_relative_config=True,
+                instance_path=os.path.abspath(settings.data_dir) if settings.data_dir else None)
     os.makedirs(app.instance_path, exist_ok=True)
 
-    app.config.from_mapping(settings_from_env())
+    app.config.from_mapping(settings.to_flask())
     app.config["DATABASE"] = os.path.join(app.instance_path, "app.db")
+    if settings.flask_secret_key:
+        app.config["SECRET_KEY"] = settings.flask_secret_key
     if overrides:
         app.config.update(overrides)
     if not app.config.get("SECRET_KEY"):
-        app.config["SECRET_KEY"] = load_secret_key(app.instance_path)
+        app.config["SECRET_KEY"] = load_secret_key(app.instance_path, production=settings.is_production)
+    app.extensions["settings"] = settings
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)  # our Gemini service logs retries itself
@@ -40,7 +47,16 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
     init_retention(app)
     _register_blueprints(app)
     _register_error_handlers(app)
+    app.cli.add_command(config_check)
     return app
+
+
+@click.command("config-check")
+def config_check() -> None:
+    """Validate the configuration and print it (secrets shown only as set / not set)."""
+    from .check_config import main
+
+    raise SystemExit(main())
 
 
 def create_server_app() -> Flask:

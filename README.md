@@ -164,10 +164,22 @@ pre-commit install      # optional: run ruff and mypy on every commit
 
 ## Configuration
 
-All settings come from environment variables (or `.env`, which is git-ignored).
+All settings come from environment variables (or `.env`, which is git-ignored). They are
+checked once at start-up: a wrong value (text where a number is expected, an unknown provider,
+a negative limit…) stops the app with a list of every problem instead of being silently
+replaced by a default. Check the configuration without starting anything:
+
+```bash
+python -m app.check_config      # prints every setting, secrets only as "set" / "not set"
+```
+
+Secrets (`FLASK_SECRET_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `INVITE_CODE`) can also be
+read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kubernetes secrets).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
+| `APP_ENV` | `development` | `production` makes the AI key and HTTPS-only cookies mandatory and never generates a new session secret; `development`, `test` |
+| `DATA_DIR` | `instance/` | Folder for the SQLite database and the generated session secret |
 | `LLM_PROVIDER` | `gemini` | AI provider: `deepseek` or `gemini` |
 | `DEEPSEEK_API_KEY` | — (required for DeepSeek) | DeepSeek API key |
 | `DEEPSEEK_MODEL` | `deepseek-flash` | DeepSeek model (thinking mode is switched off to save tokens) |
@@ -178,8 +190,8 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 | `GEMINI_FALLBACK_MODEL` | empty | Comma-separated chain tried while the main model is rate-limited, overloaded or out of daily quota |
 | `GEMINI_CONCURRENCY` | `2` | Parallel AI requests, for either provider |
 | `GEMINI_MAX_RETRIES` | `5` | Retries on 429/5xx before a resume is marked failed, for either provider |
-| `FLASK_SECRET_KEY` | generated | Session secret; generated into `instance/.secret_key` if unset |
-| `SESSION_COOKIE_SECURE` | `0` | Set to `1` when served over HTTPS |
+| `FLASK_SECRET_KEY` | generated | Session secret (at least 32 characters); outside production it is generated into `instance/.secret_key` if unset |
+| `SESSION_COOKIE_SECURE` | `0`; `1` in production | Cookies only over HTTPS; cannot be `0` in production |
 | `INVITE_CODE` | empty | Initial invite code; until an admin saves the registration settings, a non-empty code opens sign-up with this code |
 | `DAILY_RESUME_LIMIT` | `30` | Initial limit of resumes per recruiter per 24 hours (0 = none); admins change it in the app |
 | `DAILY_AI_CHECK_LIMIT` | `20` | Initial limit of AI vacancy checks per recruiter per 24 hours (0 = none); the dictionary check always runs; admins change it in the app |
