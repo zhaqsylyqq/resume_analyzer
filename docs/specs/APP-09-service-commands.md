@@ -33,6 +33,23 @@ Exit code 0 on success, 1 with a one-line reason; ASCII output for Windows logs.
   is validated at start-up (32-byte base64), can come from `BACKUP_KEY_FILE`, and is shown
   only as set / not set.
 
+## Automatic backup when the USB drive is connected (2026-11-20)
+
+The owner cannot keep the USB drive in the laptop. The daily 03:00 task missed copies when
+the drive was out, and it did not run on battery at all. Now:
+
+- `flask --app app backup-auto` (scheduled every 30 minutes and at sign-in, `pythonw`, no
+  window, runs on battery): drive connected and newest copy older than 20 h → copy + restore
+  check; drive absent → nothing, unless the last verified copy is older than 3 days, then a
+  Windows notification (at most once per 20 h). A failed backup also notifies.
+- The drive is found by its folder: `BACKUP_OFFSITE_DIR`, or `<any drive>:\hrscreen-backups`
+  when Windows gave the drive another letter.
+- `instance/backups/last_offsite.txt` remembers the last verified copy while the drive is out;
+  only real copies and failures go to `offsite.log`, not the half-hourly "nothing to do".
+- `scripts/register_backup_task.ps1` re-registers the task with the new triggers.
+- Tests: copy when connected then skip while fresh, another drive letter, reminder only when
+  overdue, failure, the command (log, notification once a day), no-op outside Windows.
+
 ## Verification
 
 - `tests/test_cli.py` (9 tests): commands registered, backup to the default folder and a

@@ -215,6 +215,7 @@ read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kube
 | Delete old sessions now | `flask --app app purge-old [--days N]` |
 | Back up the database | `flask --app app backup [--out DIR] [--keep N]` |
 | Encrypted copy outside this disk | `flask --app app backup-offsite [--out DIR] [--keep N]` |
+| Same, only when the USB drive is in and the copy is old (scheduled task) | `flask --app app backup-auto` |
 | Prove a copy can be restored | `flask --app app restore-check [FILE] [--restore-to PATH]` |
 | Check the live database and the queue | `flask --app app db-check` |
 | New backup key | `flask --app app generate-backup-key` |
@@ -281,8 +282,16 @@ it and prints the row counts; `--restore-to PATH` writes the restored database.
 .\.venv\Scripts\python.exe scripts\backup_offsite.py --generate-key   # once; put it into .env as BACKUP_KEY
 .\.venv\Scripts\python.exe scripts\backup_offsite.py                  # BACKUP_OFFSITE_DIR from .env
 .\.venv\Scripts\python.exe scripts\restore_check.py
-powershell -ExecutionPolicy Bypass -File scripts\register_backup_task.ps1   # daily at 03:00, both scripts
+powershell -ExecutionPolicy Bypass -File scripts\register_backup_task.ps1   # automatic, see below
 ```
+
+**The USB drive does not have to stay plugged in.** The scheduled task runs
+`flask --app app backup-auto` every 30 minutes and at sign-in, without a window and on battery
+too: when the drive is connected and the newest copy is older than 20 hours, it makes a copy
+and verifies it; when there has been no verified copy for 3 days, a Windows notification asks
+to plug the drive in (at most once a day), and a failed backup also shows one. Plugging the
+drive in for a few minutes every couple of days is enough. Another drive letter is fine: any
+drive with a `hrscreen-backups` folder at its root is used.
 
 Store `BACKUP_KEY` in a password manager with two people: without it no copy can be read.
 

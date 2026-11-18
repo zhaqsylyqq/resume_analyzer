@@ -17,7 +17,8 @@ import re
 import secrets
 import sqlite3
 import tempfile
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -155,3 +156,87 @@ def check(blob_path: Path, key: bytes, restore_to: Path | None = None) -> dict[s
             raise BackupError(f"refusing to overwrite {restore_to}; move it away first")
         restore_to.write_bytes(data)
     return counts
+
+
+# Automatic offsite backup when the drive is connected ---------------------------------------
+
+LAST_OK_FILE = "last_offsite.txt"  # in <data>/backups: when the last checked copy was made
+
+
+@dataclass
+class AutoResult:
+    """What `auto_backup` did. `remind` asks the caller to tell the user to plug the drive in."""
+
+    status: str  # "done", "fresh", "absent", "failed"
+    message: str
+    folder: Path | None = None
+    last_ok: datetime | None = None
+    remind: bool = False
+
+
+def find_backup_folder(configured: Path, drives: list[Path] | None = None) -> Path | None:
+    """The configured folder, or the folder with the same name on another drive root.
+
+    Windows may give a USB drive another letter next time (F: today, E: tomorrow), so every
+    drive root is checked for `<root>/<folder name>`.
+    """
+    if configured.is_dir():
+        return configured
+    if drives is None:
+        drives = [Path(f"{letter}:\\") for letter in "DEFGHIJKLMNOPQRSTUVWXYZ"] if os.name == "nt" else []
+    for root in drives:
+        candidate = root / configured.name
+        try:
+            if candidate.is_dir():
+                return candidate
+        except OSError:  # an empty card reader and the like
+            continue
+    return None
+
+
+def read_last_ok(state_dir: Path) -> datetime | None:
+    try:
+        return datetime.fromisoformat((state_dir / LAST_OK_FILE).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def write_last_ok(state_dir: Path, when: datetime) -> None:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / LAST_OK_FILE).write_text(when.isoformat(timespec="seconds"), encoding="utf-8")
+
+
+def _copy_time(path: Path) -> datetime:
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+
+
+def auto_backup(db_path: Path, configured: Path, key: bytes, state_dir: Path, *, max_age: timedelta,
+                remind_after: timedelta, keep: int = 30, now: datetime | None = None,
+                drives: list[Path] | None = None) -> AutoResult:
+    """Run often (every 30 minutes): make and verify a copy only when the drive is connected and
+    the newest copy is older than `max_age`; otherwise do nothing, and ask for a reminder when
+    there has been no verified copy for `remind_after`."""
+    now = now or datetime.now(timezone.utc)
+    last_ok = read_last_ok(state_dir)
+    folder = find_backup_folder(configured, drives)
+    if folder is None:
+        overdue = last_ok is None or now - last_ok > remind_after
+        when = last_ok.isoformat(timespec="minutes") if last_ok else "never"
+        return AutoResult("absent", f"backup drive not connected; last verified copy: {when}", None, last_ok, overdue)
+
+    copies = list_backups(folder)
+    if copies:
+        newest = _copy_time(copies[-1])
+        if last_ok is None or newest > last_ok:
+            last_ok = newest  # e.g. a copy made by hand
+        if now - newest < max_age:
+            return AutoResult("fresh", f"newest copy {copies[-1].name} is recent; nothing to do", folder, last_ok)
+    try:
+        target = backup_offsite(db_path, folder, key, keep, now=now.astimezone())
+        counts = check(target, key)
+    except (BackupError, OSError, sqlite3.Error, RuntimeError) as exc:
+        overdue = last_ok is None or now - last_ok > remind_after
+        return AutoResult("failed", f"offsite backup failed: {exc}", folder, last_ok, overdue)
+    write_last_ok(state_dir, now)
+    summary = ", ".join(f"{k} {v}" for k, v in counts.items())
+    return AutoResult("done", f"copy written and verified: {target} ({summary})", folder, now)
