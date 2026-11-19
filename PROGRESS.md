@@ -24,6 +24,7 @@
 | 18 | S3 example session for new users + delete a vacancy | done |
 | 20 | S5 user feedback: “Подходят” tile filter, mobile layout, score colours | done |
 | 19 | S4 (SIS 10-11): real client IP behind the tunnel, unique email, audit de-dup; CR-01 candidate pipeline | done |
+| 32 | APP-05: with external workers the upload only stores the file; the worker extracts the text, drops the file afterwards; migration 0002 ([spec](docs/specs/APP-05-parsing-in-worker.md)) | done |
 | 31 | APP-04: `WORKER_MODE=external` + `flask --app app worker` (database queue, SKIP LOCKED, stale requeue, graceful stop); gunicorn for Linux; compose `worker` service ([spec](docs/specs/APP-04-worker.md)) | done |
 | 30 | APP-03: `db-move` SQLite → PostgreSQL with per-table count + SHA-256 comparison; PostgreSQL backups (encrypted pg_dump, restore check), combined coverage in CI ([spec](docs/specs/APP-03-data-move.md)) | done |
 | 29 | APP-02: PostgreSQL support (`DATABASE_URL`), Alembic migrations, SKIP LOCKED queue claim, suite runs on both engines, compose `db` service ([spec](docs/specs/APP-02-postgresql.md)) | done; data move is APP-03 |

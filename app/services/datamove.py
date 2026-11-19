@@ -28,7 +28,7 @@ TABLES: dict[str, tuple[str, ...]] = {
     "sessions": ("id", "title", "language", "created_at", "updated_at", "owner_id"),
     "vacancies": ("id", "session_id", "title", "text", "bias_json", "created_at"),
     "resumes": ("id", "session_id", "filename", "sha256", "text", "status", "error", "profile_json", "created_at",
-                "analyzed_at", "started_at"),
+                "analyzed_at", "started_at", "raw_file"),
     "demographics": ("resume_id", "gender", "age"),
     "scores": ("resume_id", "vacancy_id", "score", "verdict", "summary", "details_json", "created_at"),
     "settings": ("key", "value", "updated_at"),
@@ -83,6 +83,8 @@ def _normalize(value: Any) -> str:
         return "\x00"
     if isinstance(value, bool):
         return str(int(value))
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).hex()
     return str(value)
 
 

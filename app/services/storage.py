@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS resumes (
     profile_json TEXT,
     created_at   TEXT NOT NULL,
     analyzed_at  TEXT,
+    raw_file     BLOB,
     UNIQUE (session_id, sha256)
 );
 CREATE TABLE IF NOT EXISTS demographics (
@@ -187,6 +188,8 @@ def _migrate(db: Database) -> None:
     resume_columns = {row["name"] for row in db.execute("PRAGMA table_info(resumes)")}
     if "started_at" not in resume_columns:  # Q1: time per resume for the ETA
         db.execute("ALTER TABLE resumes ADD COLUMN started_at TEXT")
+    if "raw_file" not in resume_columns:  # APP-05: uploaded file waiting for a worker to parse it
+        db.execute("ALTER TABLE resumes ADD COLUMN raw_file BLOB")
     if "owner_id" not in columns:
         # Sessions created before login existed have no owner: only admins see them.
         db.execute("ALTER TABLE sessions ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL")
@@ -298,20 +301,43 @@ def resume_exists(db: Database, session_id: int, sha256: str) -> bool:
 
 
 def add_resume(
-    db: Database, session_id: int, filename: str, sha256: str, text: str, status: str, error: str | None = None
+    db: Database, session_id: int, filename: str, sha256: str, text: str, status: str, error: str | None = None,
+    raw_file: bytes | None = None,
 ) -> int | None:
-    """Insert a resume; returns None if the same file is already in the session."""
+    """Insert a resume; returns None if the same file is already in the session.
+
+    APP-05: with `raw_file` the text is extracted later by a worker (status stays pending).
+    """
     with db:
         row = db.execute(
-            """INSERT INTO resumes (session_id, filename, sha256, text, status, error, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
+            """INSERT INTO resumes (session_id, filename, sha256, text, status, error, created_at, raw_file)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT (session_id, sha256) DO NOTHING RETURNING id""",
-            (session_id, filename, sha256, text, status, error, now()),
+            (session_id, filename, sha256, text, status, error, now(), raw_file),
         ).fetchone()
         if row is None:
             return None
         touch_session(db, session_id)
     return _rowid(row)
+
+
+def raw_file(row: Any) -> bytes | None:
+    """The uploaded file still waiting to be parsed (APP-05), as bytes on both engines."""
+    value = row["raw_file"]
+    return bytes(value) if value is not None else None
+
+
+def save_parsed(db: Database, resume_id: int, text: str | None, error: str | None) -> None:
+    """APP-05: store the extracted text (or the parse error) and drop the uploaded file: the
+    original document (it may hold a photo and contacts) is not kept once the text exists."""
+    with db:
+        if error:
+            db.execute(
+                "UPDATE resumes SET text = '', status = ?, error = ?, raw_file = NULL, analyzed_at = ? WHERE id = ?",
+                (PARSE_FAILED, error, now(), resume_id),
+            )
+        else:
+            db.execute("UPDATE resumes SET text = ?, raw_file = NULL WHERE id = ?", (text or "", resume_id))
 
 
 def list_resumes(db: Database, session_id: int) -> list[Any]:

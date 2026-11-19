@@ -29,6 +29,7 @@ from .gemini import (
     get_gemini,
     usage_scope,
 )
+from .parsing import parse_file
 from .schemas import VacancyInput
 
 log = logging.getLogger(__name__)
@@ -267,6 +268,16 @@ def _analyze_one(app: Flask, service: GeminiService, resume_id: int, language: s
         row = storage.get_resume(db, resume_id)
         if row is None:
             return
+        raw = storage.raw_file(row)
+        if raw is not None:  # APP-05: uploaded in external mode; extract the text here, not in the web process
+            parsed = parse_file(row["filename"], raw, max_bytes=app.config["MAX_FILE_BYTES"],
+                                max_chars=app.config["MAX_RESUME_CHARS"])
+            storage.save_parsed(db, resume_id, parsed.text, parsed.error)
+            if not parsed.ok:
+                return
+            row = storage.get_resume(db, resume_id)
+            if row is None:
+                return
         profile = storage.load_profile(row)
         if profile is None:
             profile = service.extract_profile(row["text"], language)
