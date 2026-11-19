@@ -164,8 +164,11 @@ def init_db(app: Flask) -> None:
         if not db.is_postgres:
             db.raw.executescript(SCHEMA)
             _migrate(db)
-        # Work interrupted by a restart goes back to the queue.
-        db.execute("UPDATE resumes SET status = ? WHERE status = ?", (PENDING, PROCESSING))
+        # Work interrupted by a restart goes back to the queue. With separate worker processes
+        # (APP-04) a web restart must not take resumes away from running workers: they requeue
+        # only stale ones (storage.requeue_stale).
+        if app.config.get("WORKER_MODE", "inline") == "inline":
+            db.execute("UPDATE resumes SET status = ? WHERE status = ?", (PENDING, PROCESSING))
         db.commit()
     finally:
         db.close()
@@ -357,6 +360,22 @@ def claim_pending(db: Database, session_id: int, limit: int = 1000) -> list[int]
         db.rollback()
         raise
     return ids
+
+
+def session_has_work(db: Database, session_id: int) -> bool:
+    """APP-04: pending or processing resumes in this session (worker processes may be busy)."""
+    return db.execute(
+        "SELECT 1 FROM resumes WHERE session_id = ? AND status IN (?, ?) LIMIT 1", (session_id, PENDING, PROCESSING)
+    ).fetchone() is not None
+
+
+def requeue_stale(db: Database, cutoff_iso: str) -> int:
+    """APP-04: resumes left in processing by a worker that died before this time go back to the queue."""
+    with db:
+        return db.execute(
+            "UPDATE resumes SET status = ? WHERE status = ? AND (started_at IS NULL OR started_at < ?)",
+            (PENDING, PROCESSING, cutoff_iso),
+        ).rowcount
 
 
 def sessions_with_pending(db: Database) -> list[int]:

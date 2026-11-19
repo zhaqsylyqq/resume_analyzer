@@ -50,6 +50,9 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
     _register_blueprints(app)
     _register_error_handlers(app)
     init_cli(app)
+    from .worker import init_worker
+
+    init_worker(app)
     return app
 
 

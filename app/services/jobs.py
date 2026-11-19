@@ -15,7 +15,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-from flask import Flask, current_app
+from flask import Flask, current_app, has_app_context
 
 from . import storage
 from .gemini import (
@@ -76,7 +76,19 @@ def _reset_for_tests() -> None:
     _draining.clear()
 
 
+def external(app: Flask | None = None) -> bool:
+    """APP-04: WORKER_MODE=external — separate `flask --app app worker` processes analyze
+    resumes; the web process only saves them as pending."""
+    if app is None:
+        if not has_app_context():
+            return False
+        app = current_app._get_current_object()  # type: ignore[attr-defined]
+    return app.config.get("WORKER_MODE") == "external"
+
+
 def is_running(session_id: int) -> bool:
+    if external():
+        return storage.session_has_work(storage.get_db(), session_id)
     with _lock:
         return session_id in _batches
 
@@ -85,6 +97,8 @@ def start(session_id: int) -> bool:
     """Queue a session for analysis; returns False if it was already queued."""
     app = current_app._get_current_object()  # type: ignore[attr-defined]
     service = get_gemini()
+    if external(app):
+        return True  # the resumes are pending in the database; a worker process takes them
     if _draining.is_set():
         # Shutting down: the resumes are already saved as pending and run after the restart.
         return False
@@ -108,6 +122,8 @@ def resume_pending(app: Flask) -> list[int]:
     "analyze" again. When the AI provider is not configured nothing is queued and the
     server still starts.
     """
+    if external(app):
+        return []  # worker processes pick pending resumes up themselves
     with app.app_context():
         session_ids = storage.sessions_with_pending(storage.get_db())
         if not session_ids:

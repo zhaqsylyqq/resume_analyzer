@@ -78,6 +78,13 @@ class Settings:
     # APP-08: seconds a stopping server waits for resumes being analyzed (keep below the
     # orchestrator's grace period: Docker 10 s by default, Kubernetes 30 s)
     shutdown_timeout: int = 25
+    # APP-04: "inline" = analysis threads inside the web process (one process, the laptop);
+    # "external" = separate `flask --app app worker` processes take resumes from the database
+    worker_mode: str = "inline"
+    # APP-04: worker processes wait this long between queue checks when idle
+    worker_poll_seconds: int = 2
+    # APP-04: a resume "processing" longer than this belonged to a worker that died; it is requeued
+    stale_processing_minutes: int = 15
     # SEC-01: admins must switch on two-factor sign-in before using the app
     admin_mfa_required: bool = False
     # QW-01 / APP-09: encrypted copies go to this folder outside the host, sealed with this key
@@ -113,6 +120,9 @@ class Settings:
             "TRUSTED_PROXIES": self.trusted_proxies,
             "SHUTDOWN_TIMEOUT": self.shutdown_timeout,
             "ADMIN_MFA_REQUIRED": self.admin_mfa_required,
+            "WORKER_MODE": self.worker_mode,
+            "WORKER_POLL_SECONDS": self.worker_poll_seconds,
+            "STALE_PROCESSING_MINUTES": self.stale_processing_minutes,
             "BACKUP_OFFSITE_DIR": self.backup_offsite_dir,
             "BACKUP_KEY": self.backup_key,
             "BACKUP_RESTORE_URL": self.backup_restore_url,
@@ -264,6 +274,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         backup_restore_url=r.secret("BACKUP_RESTORE_URL"),
         shutdown_timeout=r.integer("SHUTDOWN_TIMEOUT", 25, minimum=0, maximum=600),
         admin_mfa_required=r.boolean("ADMIN_MFA_REQUIRED", False),
+        worker_mode=r.choice("WORKER_MODE", "inline", ("inline", "external")),
+        worker_poll_seconds=r.integer("WORKER_POLL_SECONDS", 2, minimum=1, maximum=60),
+        stale_processing_minutes=r.integer("STALE_PROCESSING_MINUTES", 15, minimum=2, maximum=24 * 60),
         backup_offsite_dir=r.text("BACKUP_OFFSITE_DIR"),
         backup_key=r.secret("BACKUP_KEY"),
         secret_sources=r.secret_sources,

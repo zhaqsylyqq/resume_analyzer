@@ -185,6 +185,9 @@ read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kube
 | `PG_BIN_DIR` | PATH, then `C:\Program Files\PostgreSQL\16\bin` | Folder with `pg_dump` / `pg_restore` for PostgreSQL backups |
 | `DATABASE_URL` | empty (SQLite) | `postgresql://user:password@host:5432/db`: use PostgreSQL; the schema is migrated at start-up (Alembic). Shown in reports with the password masked |
 | `ADMIN_MFA_REQUIRED` | `0` | `1` = admins must switch on two-factor sign-in before using the app |
+| `WORKER_MODE` | `inline` | `inline`: analysis threads inside the web process (the laptop). `external`: run `flask --app app worker` processes; the web process only queues |
+| `WORKER_POLL_SECONDS` | `2` | Idle worker checks the queue this often |
+| `STALE_PROCESSING_MINUTES` | `15` | A resume processing longer than this (its worker died) goes back to the queue |
 | `SHUTDOWN_TIMEOUT` | `25` | Seconds a stopping server waits for resumes being analyzed (keep below the orchestrator's grace period) |
 | `LLM_PROVIDER` | `gemini` | AI provider: `deepseek` or `gemini` |
 | `DEEPSEEK_API_KEY` | — (required for DeepSeek) | DeepSeek API key |
@@ -223,6 +226,8 @@ read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kube
 | Prove a copy can be restored | `flask --app app restore-check [FILE] [--restore-to PATH]` |
 | Check the live database and the queue | `flask --app app db-check` |
 | Apply PostgreSQL migrations | `flask --app app db-upgrade` (also automatic at start-up) |
+| Analysis worker (with `WORKER_MODE=external`) | `flask --app app worker [--threads N]`; several can run at once |
+| Web on Linux with separate workers | `gunicorn -c python:app.gunicorn_conf "app:create_app()"` |
 | Move the data from SQLite to PostgreSQL | `flask --app app db-move --to postgresql://… [--replace]` (site stopped) |
 | New backup key | `flask --app app generate-backup-key` |
 | Switch off 2FA for a locked-out user | `flask --app app reset-2fa USER` |

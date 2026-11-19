@@ -7,7 +7,10 @@ services:
   app:
     build: ..
     env_file: ../.env
+    # APP-04: web only (gunicorn, several processes); analysis runs in the `worker` service
+    command: ["gunicorn", "-c", "python:app.gunicorn_conf", "app:create_app()"]
     environment:
+      WORKER_MODE: external
       # APP-01: strict profile. FLASK_SECRET_KEY must be set in .env (or kept in the volume).
       APP_ENV: production
       SESSION_COOKIE_SECURE: "1"
@@ -23,6 +26,25 @@ services:
         condition: service_healthy
     restart: unless-stopped
     # APP-08: time to finish resumes in analysis on `docker compose down` (SHUTDOWN_TIMEOUT=25)
+    stop_grace_period: 30s
+
+  worker:
+    build: ..
+    env_file: ../.env
+    # Scale with `docker compose up -d --scale worker=2`: workers never take the same resume.
+    command: ["flask", "--app", "app", "worker"]
+    environment:
+      APP_ENV: production
+      WORKER_MODE: external
+      DATABASE_URL: postgresql://hrscreen:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/hrscreen
+    volumes:
+      - app-data:/app/instance
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      disable: true  # no HTTP port; the image's /healthz check is for the web service
+    restart: unless-stopped
     stop_grace_period: 30s
 
   tunnel:
