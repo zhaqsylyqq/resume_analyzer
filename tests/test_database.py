@@ -81,7 +81,7 @@ def test_migrations_are_idempotent_and_reported():
     from app.services import migrations
 
     migrations.upgrade(TEST_DATABASE_URL)  # already at head: nothing happens
-    assert migrations.current(TEST_DATABASE_URL) == "0002_resume_raw_file"
+    assert migrations.current(TEST_DATABASE_URL) == "0003_rate_limits"
 
 
 @postgres_only
@@ -117,7 +117,7 @@ def test_two_workers_never_claim_the_same_resume(app):
 @postgres_only
 def test_db_upgrade_command(app):
     result = app.test_cli_runner().invoke(args=["db-upgrade"])
-    assert result.exit_code == 0 and "0002_resume_raw_file" in result.output
+    assert result.exit_code == 0 and "0003_rate_limits" in result.output
 
 
 def test_db_upgrade_on_sqlite_is_a_no_op(app):

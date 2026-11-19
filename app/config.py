@@ -85,6 +85,8 @@ class Settings:
     worker_poll_seconds: int = 2
     # APP-04: a resume "processing" longer than this belonged to a worker that died; it is requeued
     stale_processing_minutes: int = 15
+    # APP-06: where rate-limit counters live: database (shared by all processes) or memory
+    rate_limit_store: str = "database"
     # SEC-01: admins must switch on two-factor sign-in before using the app
     admin_mfa_required: bool = False
     # QW-01 / APP-09: encrypted copies go to this folder outside the host, sealed with this key
@@ -121,6 +123,7 @@ class Settings:
             "SHUTDOWN_TIMEOUT": self.shutdown_timeout,
             "ADMIN_MFA_REQUIRED": self.admin_mfa_required,
             "WORKER_MODE": self.worker_mode,
+            "RATE_LIMIT_STORE": self.rate_limit_store,
             "WORKER_POLL_SECONDS": self.worker_poll_seconds,
             "STALE_PROCESSING_MINUTES": self.stale_processing_minutes,
             "BACKUP_OFFSITE_DIR": self.backup_offsite_dir,
@@ -275,6 +278,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         shutdown_timeout=r.integer("SHUTDOWN_TIMEOUT", 25, minimum=0, maximum=600),
         admin_mfa_required=r.boolean("ADMIN_MFA_REQUIRED", False),
         worker_mode=r.choice("WORKER_MODE", "inline", ("inline", "external")),
+        rate_limit_store=r.choice("RATE_LIMIT_STORE", "database", ("database", "memory")),
         worker_poll_seconds=r.integer("WORKER_POLL_SECONDS", 2, minimum=1, maximum=60),
         stale_processing_minutes=r.integer("STALE_PROCESSING_MINUTES", 15, minimum=2, maximum=24 * 60),
         backup_offsite_dir=r.text("BACKUP_OFFSITE_DIR"),

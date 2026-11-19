@@ -119,6 +119,17 @@ CREATE TABLE IF NOT EXISTS password_resets (
     expires_at  TEXT NOT NULL,
     used_at     TEXT
 );
+-- APP-06: rate-limit counters shared by all processes (approximate sliding windows)
+CREATE TABLE IF NOT EXISTS rate_counters (
+    key          TEXT NOT NULL,
+    window_start INTEGER NOT NULL,
+    count        INTEGER NOT NULL,
+    PRIMARY KEY (key, window_start)
+);
+CREATE TABLE IF NOT EXISTS rate_locks (
+    key    TEXT PRIMARY KEY,
+    until  REAL NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_vacancies_session ON vacancies(session_id);
 CREATE INDEX IF NOT EXISTS idx_resumes_session_status ON resumes(session_id, status);

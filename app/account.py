@@ -12,6 +12,7 @@ import json
 from flask import Blueprint, flash, g, redirect, render_template, request, session, url_for
 
 from .auth import _fingerprint, hash_password, validate_password, verify_password
+from .ratelimits import rate_limited
 from .services import storage, totp
 
 bp = Blueprint("account", __name__, url_prefix="/account")
@@ -44,6 +45,7 @@ def index():
 
 
 @bp.post("/password")
+@rate_limited("account-secret", 10, 900)
 def change_password():
     user, db = g.user, storage.get_db()
     errors = {}
@@ -71,6 +73,7 @@ def start_2fa():
 
 
 @bp.post("/2fa/confirm")
+@rate_limited("account-secret", 10, 900)
 def confirm_2fa():
     user, db = g.user, storage.get_db()
     secret = session.get(PENDING_KEY)
@@ -101,6 +104,7 @@ def _check_password_and_code(errors: dict[str, str]) -> int | None:
 
 
 @bp.post("/2fa/disable")
+@rate_limited("account-secret", 10, 900)
 def disable_2fa():
     user, db = g.user, storage.get_db()
     if not user["totp_secret"]:
@@ -116,6 +120,7 @@ def disable_2fa():
 
 
 @bp.post("/2fa/recovery")
+@rate_limited("account-secret", 10, 900)
 def new_recovery_codes():
     user, db = g.user, storage.get_db()
     if not user["totp_secret"]:

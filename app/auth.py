@@ -15,9 +15,7 @@ import ipaddress
 import json
 import re
 import secrets
-import threading
 import time
-from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from typing import Any, Callable
@@ -44,9 +42,10 @@ from flask.cli import with_appcontext
 
 from . import settings as app_settings
 from .i18n import translate
+from .ratelimits import rate_limited
 from .security import is_safe_redirect, is_trusted_proxy
+from .services import ratelimit, storage
 from .services import stats as usage_stats
-from .services import storage
 from .starter import create_starter_session
 
 bp = Blueprint("auth", __name__)
@@ -117,36 +116,21 @@ def validate_password(password: str) -> str | None:
 # Rate limiting of failed logins ---------------------------------------------------------------
 
 class LoginLimiter:
-    """Failures per key (username, IP) in a sliding window; in memory, one process per DB."""
+    """Failures per key (username, IP): MAX_FAILURES within FAILURE_WINDOW lock the key for
+    LOCKOUT. APP-06: counted in the database by default, so every process shares them."""
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
-        self.clock = clock
-        self._failures: dict[str, deque[float]] = defaultdict(deque)
-        self._locked_until: dict[str, float] = {}
-        self._lock = threading.Lock()
+    def __init__(self, clock: Callable[[], float] = time.time, store: ratelimit.Store | None = None) -> None:
+        self._limiter = ratelimit.Limiter(store or ratelimit.MemoryStore(), MAX_FAILURES, int(FAILURE_WINDOW),
+                                          lockout=int(LOCKOUT), clock=clock)
 
     def blocked(self, *keys: str) -> bool:
-        now = self.clock()
-        with self._lock:
-            return any(self._locked_until.get(k, 0) > now for k in keys)
+        return self._limiter.blocked(*keys)
 
     def fail(self, *keys: str) -> None:
-        now = self.clock()
-        with self._lock:
-            for key in keys:
-                window = self._failures[key]
-                window.append(now)
-                while window and window[0] < now - FAILURE_WINDOW:
-                    window.popleft()
-                if len(window) >= MAX_FAILURES:
-                    self._locked_until[key] = now + LOCKOUT
-                    window.clear()
+        self._limiter.hit(*keys)
 
     def reset(self, *keys: str) -> None:
-        with self._lock:
-            for key in keys:
-                self._failures.pop(key, None)
-                self._locked_until.pop(key, None)
+        self._limiter.reset(*keys)
 
 
 def _limiter() -> LoginLimiter:
@@ -156,25 +140,15 @@ def _limiter() -> LoginLimiter:
 class SignupLimiter:
     """S2: at most MAX_SIGNUPS_PER_IP successful sign-ups per IP per SIGNUP_WINDOW."""
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
-        self.clock = clock
-        self._events: dict[str, deque[float]] = defaultdict(deque)
-        self._lock = threading.Lock()
-
-    def _prune(self, ip: str, now: float) -> deque[float]:
-        events = self._events[ip]
-        while events and events[0] <= now - SIGNUP_WINDOW:
-            events.popleft()
-        return events
+    def __init__(self, clock: Callable[[], float] = time.time, store: ratelimit.Store | None = None) -> None:
+        self._limiter = ratelimit.Limiter(store or ratelimit.MemoryStore(), MAX_SIGNUPS_PER_IP, int(SIGNUP_WINDOW),
+                                          clock=clock)
 
     def blocked(self, ip: str) -> bool:
-        with self._lock:
-            return len(self._prune(ip, self.clock())) >= MAX_SIGNUPS_PER_IP
+        return self._limiter.blocked(f"signup:{ip}")
 
     def record(self, ip: str) -> None:
-        with self._lock:
-            now = self.clock()
-            self._prune(ip, now).append(now)
+        self._limiter.hit(f"signup:{ip}")
 
 
 def current_settings() -> app_settings.AppSettings:
@@ -254,8 +228,10 @@ def admin_required(view):
 
 def init_auth(app: Flask) -> None:
     app.config.setdefault("PERMANENT_SESSION_LIFETIME", SESSION_LIFETIME)
-    app.extensions["login_limiter"] = LoginLimiter()
-    app.extensions["signup_limiter"] = SignupLimiter()
+    store = ratelimit.store_for(app)
+    app.extensions["rate_store"] = store
+    app.extensions["login_limiter"] = LoginLimiter(store=store)
+    app.extensions["signup_limiter"] = SignupLimiter(store=store)
     # Runs after the CSRF check registered by init_security.
     app.before_request(_load_user)
     app.before_request(_require_login)
@@ -488,6 +464,7 @@ def create_reset_link(db, user, created_by=None) -> str:
 
 
 @bp.route("/reset/<token>", methods=["GET", "POST"])
+@rate_limited("reset", 10, 900, by="ip", methods=("POST",))
 def reset_password(token: str):
     """The user sets a new password. Two-factor sign-in stays on: a leaked link alone is not
     enough to take over an account protected by it."""

@@ -15,7 +15,7 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 for _name in ("DATABASE_URL", "DATABASE_URL_FILE", "BACKUP_RESTORE_URL", "BACKUP_RESTORE_URL_FILE"):
     os.environ[_name] = ""
 ON_POSTGRES = bool(TEST_DATABASE_URL)
-PG_TABLES = ("password_resets", "llm_usage", "candidate_status", "audit_log", "settings", "scores",
+PG_TABLES = ("rate_counters", "rate_locks", "password_resets", "llm_usage", "candidate_status", "audit_log", "settings", "scores",
              "demographics", "resumes", "vacancies", "sessions", "users")
 
 

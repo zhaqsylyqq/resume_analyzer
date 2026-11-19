@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% set known = code in (400, 403, 404, 413) %}
+{% set known = code in (400, 403, 404, 413, 429) %}
 {% block title %}{{ code }}{% endblock %}
 {% block content %}
 <section class="empty-state empty-state--page">

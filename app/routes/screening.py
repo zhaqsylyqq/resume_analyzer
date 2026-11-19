@@ -8,6 +8,7 @@ from flask import Blueprint, current_app, g, jsonify, request
 
 from ..auth import current_settings, is_admin
 from ..i18n import translate
+from ..ratelimits import rate_limited
 from ..services import jobs, storage
 from ..services.gemini import GeminiError
 from ..services.parsing import parse_file, precheck
@@ -41,6 +42,7 @@ def remaining_label(remaining: int | None) -> str | None:
 
 
 @bp.post("/<int:session_id>/resumes")
+@rate_limited("work", 20, 60)
 def upload(session_id: int):
     load_session_or_404(session_id)
     cfg = current_app.config
@@ -90,6 +92,7 @@ def upload(session_id: int):
 
 
 @bp.post("/<int:session_id>/analyze")
+@rate_limited("work", 20, 60)
 def analyze(session_id: int):
     """Re-queue failed resumes and resumes missing a score, then run the job."""
     load_session_or_404(session_id)

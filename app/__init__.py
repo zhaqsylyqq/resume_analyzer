@@ -121,14 +121,17 @@ def _wants_json() -> bool:
 
 
 def _register_error_handlers(app: Flask) -> None:
-    known = (400, 403, 404, 413)
+    known = (400, 403, 404, 413, 429)
 
     @app.errorhandler(HTTPException)
     def handle_http(exc: HTTPException):
         code = exc.code or 500
+        # keep the exception's own headers (Retry-After on 429, Allow on 405)
+        headers = [(k, v) for k, v in exc.get_headers() if k.lower() != "content-type"]
         if _wants_json():
-            return jsonify(error=exc.name, code=code, message=translate(f"error.{code if code in known else 500}")), code
-        return render_template("error.html", code=code), code
+            body = jsonify(error=exc.name, code=code, message=translate(f"error.{code if code in known else 500}"))
+            return body, code, headers
+        return render_template("error.html", code=code), code, headers
 
     @app.errorhandler(Exception)
     def handle_unexpected(exc: Exception):
