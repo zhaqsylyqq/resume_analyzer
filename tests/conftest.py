@@ -88,6 +88,17 @@ def app(tmp_path, _postgres_schema):
 
 
 @pytest.fixture(autouse=True)
+def steady_rate_limit_clock(monkeypatch):
+    """Rate limits count in windows, weighting the previous one. With the real clock, a burst
+    that straddles a window edge is weighted to just under the limit and the test flakes (seen
+    in CI on 2026-11-25). Every limiter without its own clock sees one fixed moment, in the
+    middle of a minute, of 15 minutes and of an hour; tests about time passing pass a clock."""
+    from app.services import ratelimit
+
+    monkeypatch.setattr(ratelimit, "now", lambda: 1_800_000_030.0)
+
+
+@pytest.fixture(autouse=True)
 def fast_password_hashing(monkeypatch):
     """Argon2 with production parameters is deliberately slow; tests use cheap ones."""
     from argon2 import PasswordHasher

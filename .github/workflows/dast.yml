@@ -1,7 +1,7 @@
 name: DAST
 
-# SEC-04: OWASP ZAP baseline scan (spider + passive rules: it reads answers, it does not attack)
-# of a throw-away copy of the site started inside this job: production settings, an empty
+# SEC-04: OWASP ZAP baseline scan (spider + passive rules: no attack payloads) of a
+# throw-away copy of the site started inside this job: production settings, an empty
 # SQLite database filled by ci/dast_seed.py, keys generated for this run only, no AI key.
 # Nothing outside the runner is touched. When a staging environment exists (CD-02), the
 # target becomes staging after each deploy.
@@ -94,9 +94,10 @@ jobs:
         continue-on-error: ${{ env.REPORT_ONLY == 'true' }}
         run: |
           mkdir -p zap-wrk && chmod 777 zap-wrk && cp .zap/rules.tsv zap-wrk/
-          # Forms are not submitted (no POST at all): the scan reads pages, it changes nothing.
-          options="-config spider.postform=false -config spider.processform=false"
-          options="$options -config replacer.full_list(0).description=session"
+          # Like every baseline scan, the spider also submits the forms it finds, with the page's
+          # CSRF token (the first run changed a password: refused, wrong current password). Only
+          # this throw-away copy can change; the session cookie stays valid after a sign-out.
+          options="-config replacer.full_list(0).description=session"
           options="$options -config replacer.full_list(0).enabled=true"
           options="$options -config replacer.full_list(0).matchtype=REQ_HEADER"
           options="$options -config replacer.full_list(0).matchstr=Cookie"

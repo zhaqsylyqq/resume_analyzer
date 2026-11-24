@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from flask import Blueprint
 
@@ -29,6 +31,21 @@ def test_security_headers_present(client):
     assert headers["Cross-Origin-Opener-Policy"] == headers["Cross-Origin-Resource-Policy"] == "same-origin"
     assert headers["Cross-Origin-Embedder-Policy"] == "require-corp"
     assert headers["Cache-Control"] == "no-store"
+
+
+def test_reflected_filter_values_are_escaped(client, csrf, fake_gemini):
+    """SEC-04 (ZAP 10031): the ranking puts the query's filter values back into links and
+    inputs; they are always escaped."""
+    from .helpers import create_session, resume_text, upload
+
+    session_id = create_session(client, csrf)
+    upload(client, csrf, session_id, [("cv.txt", resume_text(1))])  # the search box needs a candidate
+    vacancy_id = re.search(r"/vacancies/(\d+)", client.get(f"/sessions/{session_id}").get_data(as_text=True)).group(1)
+    payload = '"><img src=x onerror=alert(1)>'
+    page = client.get(f"/sessions/{session_id}/vacancies/{vacancy_id}",
+                      query_string={"q": payload, "top": payload, "status": payload, "fit": payload}).get_data(as_text=True)
+    assert "<img src=x" not in page and "onerror=alert(1)>" not in page
+    assert "&#34;&gt;&lt;img src=x onerror=alert(1)&gt;" in page  # shown back to the user, as text
 
 
 def test_static_files_stay_cacheable(client):

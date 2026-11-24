@@ -87,8 +87,10 @@ without calling the real AI:
 on pull requests that change the app. It starts a throw-away copy of the site inside the job
 (production settings, empty SQLite filled by `ci/dast_seed.py`, keys generated for the run, no
 AI key), signs in as a recruiter (`ci/dast_login.py`) and lets ZAP spider and passively check
-every page a recruiter can reach. Forms are not submitted, so nothing is changed or deleted.
-The live site and its database are never touched. After CD-02 the target becomes staging.
+every page a recruiter can reach. Like every baseline scan, the spider also submits the forms
+it finds (with the page's CSRF token), so the copy's data may change during the scan; that is
+why the target is a copy. The live site and its database are never touched. After CD-02 the
+target becomes staging.
 
 `.zap/rules.tsv` sets FAIL for protections the app already has (security headers, cookie
 flags, CSP, site isolation, error disclosure): such a finding is a regression. Report-only
@@ -99,8 +101,11 @@ until 2026-12-01, together with `security.yml`.
 | Date | Run | Finding | Decision |
 |---|---|---|---|
 | 2026-11-25 | before the first run | Expected: site isolation (90004) and cache-control (10015) | Fixed in advance: COOP/CORP/COEP and `no-store` (T-16) |
-
-The first CI run on the pushed branch fills this table.
+| 2026-11-25 | DAST #1 (`2131ca9`), 54 URLs, 0 server errors | No finding on a FAIL rule; no Low, Medium or High risk | — |
+| 2026-11-25 | DAST #1 | 10031 User Controllable HTML Element Attribute (informational, 4): `fit`, `top`, `status`, `q` come back in the ranking's links and inputs | Accepted: values are escaped; regression test `test_security.py::test_reflected_filter_values_are_escaped`; rule set to INFO |
+| 2026-11-25 | DAST #1 | 10049 Non-Storable Content (informational, 5) | Expected: the `no-store` of T-16 |
+| 2026-11-25 | DAST #1 | 10111 Authentication Request Identified, 10112 Session Management Response Identified (informational) | Facts about the site (the spider posted the change-password form: refused, 400) |
+| 2026-11-25 | DAST #1 | The scan submitted a form although the workflow asked it not to | The baseline's automation plan overrides the spider options: the options were removed and the docs now say that forms are submitted (to the copy only) |
 
 ## Review cadence
 

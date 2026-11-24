@@ -44,14 +44,23 @@ same-origin` and `Cross-Origin-Embedder-Policy: require-corp` next to the existi
 the app, generates keys for the run, fills an empty SQLite with `ci/dast_seed.py` (a recruiter,
 the example session, one scored resume), starts waitress, signs in with `ci/dast_login.py` and
 runs the ZAP 2.17 baseline (image pinned by digest) with the session cookie on every request.
-Forms are not submitted. `.zap/rules.tsv`: FAIL for protections the app already has, INFO for
+The spider also submits the forms it finds (only the copy can change). `.zap/rules.tsv`: FAIL for protections the app already has, INFO for
 facts, IGNORE for "ZAP is out of date". `ci/dast_summary.py` writes the findings table to the
 job summary; the HTML/JSON/Markdown reports are kept 30 days. Report-only until 2026-12-01.
 
+## First scan (2026-11-25)
+
+54 URLs, no server error, nothing on a FAIL rule and nothing above "informational". The four
+informational findings are recorded and decided in the threat model (DAST findings). Found
+while reading the run: the spider submitted a form although the workflow asked it not to (the
+baseline's automation plan overrides those options), so the options were removed and the docs
+corrected. The same push showed a flaky test (`test_ai_check_is_limited_per_user`, 1 run in
+2): ten requests that straddle a window edge are weighted to just under the limit; every
+limiter without its own clock now reads `ratelimit.now()`, which the tests pin.
+
 ## Not done here
 
-- A run of the scan before the push: ZAP could not be started in the development sandbox. The
-  first CI run on the pushed branch is the first scan; its findings go into the threat model.
+- A run of the scan before the push: ZAP could not be started in the development sandbox.
 - The real-model check (`--adversarial`): it spends the AI balance, so it runs only when the
   owner agrees.
 

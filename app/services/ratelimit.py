@@ -22,6 +22,16 @@ from . import db as dbapi
 KEEP_SECONDS = 2 * 24 * 3600  # counters older than this are deleted now and then
 
 
+def now() -> float:
+    """The clock of every limiter built without its own. Tests pin it (tests/conftest.py): with
+    the real clock, ten requests that straddle a window edge are weighted to just under ten."""
+    return time.time()
+
+
+def _now() -> float:
+    return now()  # looked up at each call, so pinning `ratelimit.now` reaches existing limiters
+
+
 class Store(Protocol):
     def incr(self, key: str, window: int, now: float) -> float: ...
     def count(self, key: str, window: int, now: float) -> float: ...
@@ -152,8 +162,9 @@ class Limiter:
     """`limit` events per `window` seconds per key; optionally a lock-out after the limit."""
 
     def __init__(self, store: Store, limit: int, window: int, lockout: int = 0,
-                 clock: Callable[[], float] = time.time) -> None:
-        self.store, self.limit, self.window, self.lockout, self.clock = store, limit, window, lockout, clock
+                 clock: Callable[[], float] | None = None) -> None:
+        self.store, self.limit, self.window, self.lockout = store, limit, window, lockout
+        self.clock = clock or _now
 
     def blocked(self, *keys: str) -> bool:
         now = self.clock()

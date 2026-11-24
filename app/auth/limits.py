@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import ipaddress
-import time
 from typing import Callable
 
 from flask import current_app, request
@@ -21,7 +20,7 @@ class LoginLimiter:
     """Failures per key (username, IP): MAX_FAILURES within FAILURE_WINDOW lock the key for
     LOCKOUT. APP-06: counted in the database by default, so every process shares them."""
 
-    def __init__(self, clock: Callable[[], float] = time.time, store: ratelimit.Store | None = None) -> None:
+    def __init__(self, clock: Callable[[], float] | None = None, store: ratelimit.Store | None = None) -> None:
         self._limiter = ratelimit.Limiter(store or ratelimit.MemoryStore(), MAX_FAILURES, int(FAILURE_WINDOW),
                                           lockout=int(LOCKOUT), clock=clock)
 
@@ -42,7 +41,7 @@ def _limiter() -> LoginLimiter:
 class SignupLimiter:
     """S2: at most MAX_SIGNUPS_PER_IP successful sign-ups per IP per SIGNUP_WINDOW."""
 
-    def __init__(self, clock: Callable[[], float] = time.time, store: ratelimit.Store | None = None) -> None:
+    def __init__(self, clock: Callable[[], float] | None = None, store: ratelimit.Store | None = None) -> None:
         self._limiter = ratelimit.Limiter(store or ratelimit.MemoryStore(), MAX_SIGNUPS_PER_IP, int(SIGNUP_WINDOW),
                                           clock=clock)
 

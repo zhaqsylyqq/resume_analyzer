@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import re
+import time
 
 import pytest
 
 from app.services import ratelimit
 
 from .conftest import login, make_user
+
+REAL_NOW = ratelimit.now  # taken before the autouse fixture pins the clock
 
 
 @pytest.fixture(params=["memory", "database"])
@@ -69,6 +72,22 @@ def test_old_rows_are_cleaned_up_now_and_then(app, monkeypatch):
     store.incr("new", 60, 1000.0 + ratelimit.KEEP_SECONDS + 600)
     assert store.count("old", 60, 1000.0) == 0
     assert store.locked_until("old") == 0
+
+
+def test_limiters_without_a_clock_use_the_real_time(monkeypatch):
+    monkeypatch.setattr(ratelimit, "now", REAL_NOW)
+    assert abs(ratelimit.Limiter(ratelimit.MemoryStore(), 1, 60).clock() - time.time()) < 5
+
+
+def test_a_burst_across_a_window_edge_is_not_counted_low():
+    """Why tests pin the clock: 10 hits straddling the edge weigh just under a limit of 10."""
+    clock = [119.5]
+    limiter = ratelimit.Limiter(ratelimit.MemoryStore(), 10, 60, clock=lambda: clock[0])
+    for _ in range(9):
+        limiter.hit("k")
+    clock[0] = 120.5
+    limiter.hit("k")
+    assert not limiter.blocked("k")  # 1 + 9 × (1 - 0.5/60) ≈ 9.93: the approximation, accepted
 
 
 def test_store_for_follows_the_setting(app):

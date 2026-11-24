@@ -18,6 +18,7 @@
 10098	FAIL	(Cross-Domain Misconfiguration)
 90004	FAIL	(Insufficient Site Isolation Against Spectre Vulnerability)
 90022	FAIL	(Application Error Disclosure)
+10031	INFO	(User Controllable HTML Element Attribute (Potential XSS)) - filter values are escaped: test_security.py::test_reflected_filter_values_are_escaped
 10049	INFO	(Storable and Cacheable Content)
 10050	INFO	(Retrieved from Cache)
 10104	INFO	(User Agent Fuzzer)
