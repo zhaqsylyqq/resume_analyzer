@@ -147,4 +147,4 @@ def test_profile_keeps_name_contacts_and_demographics_locally(app, client, csrf,
         profile = storage.load_profile(row)
         assert profile.full_name == "Айгерим Сапарова"
         assert profile.contacts.email == "aigerim@example.kz" and "701" in profile.contacts.phone
-        assert tuple(db.execute("SELECT gender, age FROM demographics").fetchone())[0] == "female"
+        assert storage.unseal("demographics", "gender", db.execute("SELECT gender FROM demographics").fetchone()[0]) == "female"

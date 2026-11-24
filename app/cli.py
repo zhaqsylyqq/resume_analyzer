@@ -279,6 +279,29 @@ def db_app_role_command(role: str, owner_url: str | None) -> None:
     click.echo(f"OK: {role} may read and add audit records, but not change or delete them.")
 
 
+@click.command("data-key-rotate")
+@click.option("--to-plaintext", is_flag=True,
+              help="Rollback only: store everything decrypted (stop the site first; the next start encrypts again).")
+@with_appcontext
+def data_key_rotate_command(to_plaintext: bool) -> None:
+    """SEC-02b: re-encrypt all personal data with the current DATA_KEY (old keys in DATA_KEY_OLD).
+    The same happens at every start; this command does it now and reports the counts."""
+    from .services import fieldcrypt, storage
+
+    if to_plaintext:
+        click.confirm("Store all personal data UNENCRYPTED (only to go back to a version before SEC-02b)?", abort=True)
+    db = storage.connect(current_app.config["DATABASE"])
+    try:
+        counts = storage.seal_all(db, plaintext=to_plaintext)
+    except fieldcrypt.DataKeyError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        db.close()
+    changed = ", ".join(f"{k}={v}" for k, v in counts.items() if v) or "nothing to change"
+    state = "decrypted" if to_plaintext else f"under key {fieldcrypt.keyring().current_id}"
+    click.echo(f"OK: personal data is {state} ({changed}).")
+
+
 @click.command("db-move")
 @click.option("--from", "sqlite_path", type=click.Path(path_type=Path), default=None,
               help="SQLite file (default: <data>/app.db).")
@@ -328,6 +351,6 @@ def config_check_command() -> None:
 
 def init_cli(app: Flask) -> None:
     for command in (backup_command, backup_offsite_command, backup_auto_command, restore_check_command, db_check_command,
-                    db_upgrade_command, db_app_role_command, db_move_command,
+                    db_upgrade_command, db_app_role_command, db_move_command, data_key_rotate_command,
                     generate_backup_key_command, config_check_command):
         app.cli.add_command(command)

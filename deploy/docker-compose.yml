@@ -12,6 +12,7 @@ services:
     environment:
       WORKER_MODE: external
       # APP-01: strict profile. FLASK_SECRET_KEY must be set in .env (or kept in the volume).
+      # SEC-02b: likewise DATA_KEY (the same for app and worker: both read .env and the volume).
       APP_ENV: production
       SESSION_COOKIE_SECURE: "1"
       # cloudflared reaches the app over the compose network, not loopback: trust that

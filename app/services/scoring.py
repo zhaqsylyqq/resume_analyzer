@@ -12,6 +12,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Callable
 
+from . import storage
 from .db import Database
 
 TOP_CHOICES = (5, 10, 20)
@@ -55,14 +56,14 @@ def ranking(db: Database, vacancy_id: int) -> list[RankedCandidate]:
     ranked: list[RankedCandidate] = []
     for position, row in enumerate(rows, start=1):
         rank = ranked[-1].rank if ranked and ranked[-1].score == row["score"] else position
-        profile = json.loads(row["profile_json"] or "{}")
+        profile = json.loads(storage.unseal("resumes", "profile_json", row["profile_json"]) or "{}")  # SEC-02b
         details = json.loads(row["details_json"] or "{}")
         contacts = profile.get("contacts") or {}
         ranked.append(
             RankedCandidate(
                 rank=rank,
                 resume_id=row["resume_id"],
-                filename=row["filename"],
+                filename=storage.unseal("resumes", "filename", row["filename"]) or "",
                 name=profile.get("full_name"),
                 headline=profile.get("headline"),
                 experience_years=profile.get("total_experience_years"),

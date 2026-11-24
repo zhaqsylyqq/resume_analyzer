@@ -11,11 +11,11 @@ from werkzeug.exceptions import HTTPException
 
 from .auth import init_auth
 from .cli import init_cli
-from .config import load_secret_key, load_settings
+from .config import load_data_keyring, load_secret_key, load_settings
 from .i18n import init_i18n, translate
 from .retention import init_retention
 from .security import init_security
-from .services import storage
+from .services import fieldcrypt, storage
 
 
 def create_app(overrides: dict[str, Any] | None = None) -> Flask:
@@ -35,6 +35,8 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
         app.config.update(overrides)
     if not app.config.get("SECRET_KEY"):
         app.config["SECRET_KEY"] = load_secret_key(app.instance_path, production=settings.is_production)
+    # SEC-02b: personal data in the database is encrypted with this key (before any storage call)
+    fieldcrypt.configure(load_data_keyring(app.config, app.instance_path, production=settings.is_production))
     app.extensions["settings"] = settings
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")

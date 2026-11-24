@@ -17,6 +17,7 @@ from typing import Any, Iterable
 from flask import Flask, current_app, g
 
 from . import db as dbapi
+from . import fieldcrypt
 from .db import Database
 from .schemas import CandidateProfile, FitAssessment
 
@@ -149,6 +150,90 @@ BEGIN SELECT RAISE(ABORT, 'audit_log is append-only (SEC-03): DELETE is not allo
 """
 
 
+# SEC-02b: personal-data columns, encrypted at rest (services/fieldcrypt.py). The values are
+# sealed on write here and opened on read here (or by the few queries that join them).
+SEALED_TEXT = {
+    "resumes": ("id", ("text", "filename", "profile_json")),
+    "demographics": ("resume_id", ("gender", "age")),
+    "users": ("id", ("totp_secret",)),
+}
+SEALED_BYTES = {"resumes": ("id", ("raw_file",))}
+
+
+def seal(table: str, column: str, value: Any) -> Any:
+    if value is None:
+        return None
+    return fieldcrypt.encrypt(str(value), f"{table}.{column}")
+
+
+def unseal(table: str, column: str, value: Any) -> str | None:
+    return fieldcrypt.decrypt(value, f"{table}.{column}")
+
+
+def _open_resume(row: Any) -> dict[str, Any] | None:
+    """A resume row with its personal columns decrypted (a plain dict)."""
+    if row is None:
+        return None
+    out = {key: row[key] for key in row.keys()}
+    for column in SEALED_TEXT["resumes"][1]:
+        if column in out:
+            out[column] = unseal("resumes", column, out[column])
+    if out.get("raw_file") is not None:
+        out["raw_file"] = fieldcrypt.decrypt_bytes(bytes(out["raw_file"]), "resumes.raw_file")
+    return out
+
+
+def totp_secret(user: Any) -> str | None:
+    """SEC-02b: the user's 2FA secret in clear (stored encrypted)."""
+    return unseal("users", "totp_secret", user["totp_secret"]) if user is not None else None
+
+
+def seal_all(db: Database, batch: int = 200, plaintext: bool = False) -> dict[str, int]:
+    """Encrypt every personal value that is still plaintext or sealed with an older key, with
+    the current key. Idempotent and safe with several processes starting at once (each row is
+    replaced only if it still holds the value that was read). Returns counts per column.
+
+    plaintext=True does the opposite, for a rollback to a version before SEC-02b: every value
+    is decrypted and stored in clear (the next start of this version encrypts it again)."""
+    ring = fieldcrypt.keyring()
+    # Text values to change: not under the current key (seal), or under any key (open).
+    pattern = f"{fieldcrypt.PREFIX}%" if plaintext else f"{fieldcrypt.PREFIX}{ring.current_id}:%"
+    test = "LIKE" if plaintext else "NOT LIKE"
+    counts: dict[str, int] = {}
+    for table, (key, columns) in SEALED_TEXT.items():
+        for column in columns:
+            done = 0
+            # Names come from the fixed SEALED_TEXT map, values are bound.
+            rows = db.execute(
+                f"SELECT {key}, {column} FROM {table} WHERE {column} IS NOT NULL "  # noqa: S608
+                f"AND CAST({column} AS TEXT) <> '' AND CAST({column} AS TEXT) {test} ?", (pattern,),
+            ).fetchall()
+            for i in range(0, len(rows), batch):
+                with db:
+                    for row_key, value in rows[i:i + batch]:
+                        clear = unseal(table, column, value)
+                        new_value = clear if plaintext else seal(table, column, clear)
+                        done += db.execute(f"UPDATE {table} SET {column} = ? WHERE {key} = ? AND {column} = ?",  # noqa: S608
+                                           (new_value, row_key, value)).rowcount or 0
+            counts[f"{table}.{column}"] = done
+    marker = fieldcrypt.BYTES_MAGIC + ring.current_id.encode()
+    for table, (key, columns) in SEALED_BYTES.items():
+        for column in columns:
+            done = 0
+            rows = db.execute(f"SELECT {key}, {column} FROM {table} WHERE {column} IS NOT NULL").fetchall()  # noqa: S608
+            with db:
+                for row_key, value in rows:
+                    data = bytes(value)
+                    if (not data.startswith(fieldcrypt.BYTES_MAGIC)) if plaintext else data.startswith(marker):
+                        continue
+                    clear_bytes = fieldcrypt.decrypt_bytes(data, f"{table}.{column}")
+                    new_bytes = clear_bytes if plaintext else fieldcrypt.encrypt_bytes(clear_bytes, f"{table}.{column}")
+                    done += db.execute(f"UPDATE {table} SET {column} = ? WHERE {key} = ? AND {column} = ?",  # noqa: S608
+                                       (new_bytes, row_key, value)).rowcount or 0
+            counts[f"{table}.{column}"] = done
+    return counts
+
+
 def _rowid(row: Any) -> int:
     """The id from `INSERT … RETURNING id` (works on SQLite ≥ 3.35 and PostgreSQL)."""
     if row is None:
@@ -195,6 +280,11 @@ def init_db(app: Flask) -> None:
         if app.config.get("WORKER_MODE", "inline") == "inline":
             db.execute("UPDATE resumes SET status = ? WHERE status = ?", (PENDING, PROCESSING))
         db.commit()
+        # SEC-02b: plaintext from before the change, or values under an older key -> current key
+        sealed = seal_all(db)
+        if any(sealed.values()):
+            logging.getLogger(__name__).info("Encrypted personal data with the current key: %s",
+                                             ", ".join(f"{k}={v}" for k, v in sealed.items() if v))
     finally:
         db.close()
     app.teardown_appcontext(close_db)
@@ -337,7 +427,8 @@ def add_resume(
             """INSERT INTO resumes (session_id, filename, sha256, text, status, error, created_at, raw_file)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT (session_id, sha256) DO NOTHING RETURNING id""",
-            (session_id, filename, sha256, text, status, error, now(), raw_file),
+            (session_id, seal("resumes", "filename", filename), sha256, seal("resumes", "text", text), status, error,
+             now(), fieldcrypt.encrypt_bytes(raw_file, "resumes.raw_file")),
         ).fetchone()
         if row is None:
             return None
@@ -346,9 +437,9 @@ def add_resume(
 
 
 def raw_file(row: Any) -> bytes | None:
-    """The uploaded file still waiting to be parsed (APP-05), as bytes on both engines."""
+    """The uploaded file still waiting to be parsed (APP-05), as bytes on both engines (decrypted)."""
     value = row["raw_file"]
-    return bytes(value) if value is not None else None
+    return fieldcrypt.decrypt_bytes(bytes(value), "resumes.raw_file") if value is not None else None
 
 
 def save_parsed(db: Database, resume_id: int, text: str | None, error: str | None) -> None:
@@ -361,19 +452,21 @@ def save_parsed(db: Database, resume_id: int, text: str | None, error: str | Non
                 (PARSE_FAILED, error, now(), resume_id),
             )
         else:
-            db.execute("UPDATE resumes SET text = ?, raw_file = NULL WHERE id = ?", (text or "", resume_id))
+            db.execute("UPDATE resumes SET text = ?, raw_file = NULL WHERE id = ?", (seal("resumes", "text", text or ""), resume_id))
 
 
 def list_resumes(db: Database, session_id: int) -> list[Any]:
-    return db.execute(
+    rows = db.execute(
         "SELECT id, filename, status, error, created_at, analyzed_at, profile_json FROM resumes "
         "WHERE session_id = ? ORDER BY id",
         (session_id,),
     ).fetchall()
+    return [_open_resume(row) for row in rows]
 
 
 def get_resume(db: Database, resume_id: int) -> Any | None:
-    return db.execute("SELECT * FROM resumes WHERE id = ?", (resume_id,)).fetchone()
+    """The resume with its text, file name, profile and uploaded file decrypted."""
+    return _open_resume(db.execute("SELECT * FROM resumes WHERE id = ?", (resume_id,)).fetchone())
 
 
 def claim_pending(db: Database, session_id: int, limit: int = 1000) -> list[int]:
@@ -484,12 +577,14 @@ def save_profile(db: Database, resume_id: int, profile: CandidateProfile) -> Non
     public = profile.model_dump(exclude={"demographics"})
     with db:
         db.execute(
-            "UPDATE resumes SET profile_json = ? WHERE id = ?", (json.dumps(public, ensure_ascii=False), resume_id)
+            "UPDATE resumes SET profile_json = ? WHERE id = ?",
+            (seal("resumes", "profile_json", json.dumps(public, ensure_ascii=False)), resume_id),
         )
         db.execute(
             "INSERT INTO demographics (resume_id, gender, age) VALUES (?, ?, ?) "
             "ON CONFLICT (resume_id) DO UPDATE SET gender = excluded.gender, age = excluded.age",
-            (resume_id, profile.demographics.gender, _age(profile)),
+            (resume_id, seal("demographics", "gender", profile.demographics.gender),
+             seal("demographics", "age", _age(profile))),
         )
 
 
@@ -503,7 +598,7 @@ def _age(profile: CandidateProfile) -> int | None:
 
 
 def load_profile(row: Any) -> CandidateProfile | None:
-    raw = row["profile_json"]
+    raw = unseal("resumes", "profile_json", row["profile_json"])  # rows from get_resume are already open
     return CandidateProfile.model_validate_json(raw) if raw else None
 
 
@@ -662,7 +757,7 @@ def list_users(db: Database) -> list[Any]:
 
 def update_user(db: Database, user_id: int, **fields: Any) -> None:
     allowed = {"password_hash", "role", "active", "last_login_at", "totp_secret", "totp_last_step", "recovery_codes"}
-    items = [(k, v) for k, v in fields.items() if k in allowed]
+    items = [(k, seal("users", k, v) if k == "totp_secret" else v) for k, v in fields.items() if k in allowed]
     if not items:
         return
     with db:

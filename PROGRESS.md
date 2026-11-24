@@ -24,6 +24,7 @@
 | 18 | S3 example session for new users + delete a vacancy | done |
 | 20 | S5 user feedback: “Подходят” tile filter, mobile layout, score colours | done |
 | 19 | S4 (SIS 10-11): real client IP behind the tunnel, unique email, audit de-dup; CR-01 candidate pipeline | done |
+| 36 | SEC-02b: personal data encrypted in the database (AES-256-GCM per column: resume text, file name, profile, waiting upload, demographics, 2FA secret), `DATA_KEY` / `<data>/.data_key`, encryption of old rows and key rotation at start-up, `python -m app.data_key`, `data-key-rotate` ([spec](docs/specs/SEC-02b-field-encryption.md)) | done; laptop switch pending |
 | 35 | SEC-03: append-only audit log (triggers on both engines, `db-app-role` for a least-privilege app role), each event also a JSON log line, new events (access denied, 2FA and password failures, recovery code, reset links), admin page with pages and filters ([spec](docs/specs/SEC-03-audit.md)) | done; laptop role switch pending |
 | 34 | CI fix: "Tests on PostgreSQL" was red since APP-02 — `ubuntu-latest` (26.04) has only PostgreSQL 18 tools and pg_restore 18 cannot restore into 16. Backups now use the client tools of the server's major version (clear error otherwise); the job runs on `ubuntu-24.04` ([spec](docs/specs/APP-03-data-move.md)) | done |
 | 33 | APP-06/07: rate-limit counters in the app database (shared by all processes, no Redis); 429 + Retry-After on uploads, analysis, AI checks, exports, password reset and account secrets ([spec](docs/specs/APP-06-07-rate-limits.md)) | done |

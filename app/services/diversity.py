@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable
 
+from . import storage
 from .db import Database
 
 AGE_BANDS: tuple[tuple[str, int, int], ...] = (
@@ -62,14 +63,15 @@ def _load(db: Database, resume_ids: Iterable[int]) -> dict[int, tuple[str, str, 
         """,  # noqa: S608
         ids,
     )
-    return {
-        row["resume_id"]: (
-            row["gender"] or "unknown",
-            age_band(row["age"]),
-            _language(row["profile_json"]),
+    out = {}
+    for row in rows:  # SEC-02b: demographics and the profile are stored encrypted
+        age = storage.unseal("demographics", "age", row["age"])
+        out[row["resume_id"]] = (
+            storage.unseal("demographics", "gender", row["gender"]) or "unknown",
+            age_band(int(age) if age not in (None, "") else None),
+            _language(storage.unseal("resumes", "profile_json", row["profile_json"])),
         )
-        for row in rows
-    }
+    return out
 
 
 def _dimension(keys: list[str], pool: list[str], shortlist: list[str]) -> dict[str, Any]:

@@ -109,6 +109,7 @@ def test_demographics_are_stored_separately_from_profile(app, client, csrf, fake
     upload(client, csrf, session_id, [("a.txt", resume_text(1))])
     with app.app_context():
         db = storage.get_db()
-        profile_json = db.execute("SELECT profile_json FROM resumes").fetchone()[0]
+        profile_json = storage.unseal("resumes", "profile_json", db.execute("SELECT profile_json FROM resumes").fetchone()[0])
         assert "demographics" not in profile_json and "female" not in profile_json
-        assert tuple(db.execute("SELECT gender, age FROM demographics").fetchone()) == ("female", 27)
+        gender, age = db.execute("SELECT gender, age FROM demographics").fetchone()
+        assert (storage.unseal("demographics", "gender", gender), storage.unseal("demographics", "age", age)) == ("female", "27")

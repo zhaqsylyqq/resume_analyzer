@@ -26,7 +26,8 @@ from typing import Any
 
 ENVIRONMENTS = ("development", "production", "test")
 PROVIDERS = ("gemini", "deepseek")
-SECRET_NAMES = ("FLASK_SECRET_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "INVITE_CODE", "BACKUP_KEY", "DATABASE_URL", "BACKUP_RESTORE_URL")
+SECRET_NAMES = ("FLASK_SECRET_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "INVITE_CODE", "BACKUP_KEY", "DATABASE_URL",
+                "BACKUP_RESTORE_URL", "DATA_KEY", "DATA_KEY_OLD")
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off", ""}
 
@@ -92,6 +93,10 @@ class Settings:
     # QW-01 / APP-09: encrypted copies go to this folder outside the host, sealed with this key
     backup_offsite_dir: str = ""
     backup_key: str = ""
+    # SEC-02b: key of the personal-data columns (base64, 32 bytes) and, while rotating, the
+    # previous keys (comma-separated). Empty: <data>/.data_key (generated outside production).
+    data_key: str = ""
+    data_key_old: str = ""
     # Sources of secrets read from *_FILE, for the config report (never the values)
     secret_sources: dict[str, str] = field(default_factory=dict)
 
@@ -129,6 +134,8 @@ class Settings:
             "BACKUP_OFFSITE_DIR": self.backup_offsite_dir,
             "BACKUP_KEY": self.backup_key,
             "BACKUP_RESTORE_URL": self.backup_restore_url,
+            "DATA_KEY": self.data_key,
+            "DATA_KEY_OLD": self.data_key_old,
             # Uploads
             "MAX_FILES_PER_BATCH": 50,
             "MAX_FILE_BYTES": 5 * 1024 * 1024,
@@ -283,6 +290,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         stale_processing_minutes=r.integer("STALE_PROCESSING_MINUTES", 15, minimum=2, maximum=24 * 60),
         backup_offsite_dir=r.text("BACKUP_OFFSITE_DIR"),
         backup_key=r.secret("BACKUP_KEY"),
+        data_key=r.secret("DATA_KEY"),
+        data_key_old=r.secret("DATA_KEY_OLD"),
         secret_sources=r.secret_sources,
     )
 
@@ -299,6 +308,18 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             load_key(settings.backup_key)
         except BackupError as exc:
             r.problems.append(str(exc))
+    if settings.data_key or settings.data_key_old:
+        from .services.fieldcrypt import DataKeyError, parse_key
+
+        for name, values in (("DATA_KEY", [settings.data_key]), ("DATA_KEY_OLD", settings.data_key_old.split(","))):
+            for value in values:
+                try:
+                    if value.strip():
+                        parse_key(value, name)
+                except DataKeyError as exc:
+                    r.problems.append(str(exc))
+        if settings.data_key_old and not settings.data_key:
+            r.problems.append("DATA_KEY_OLD is set without DATA_KEY: put the new key in DATA_KEY")
     if settings.flask_secret_key and len(settings.flask_secret_key) < 32:
         r.problems.append("FLASK_SECRET_KEY is too short (use at least 32 characters, e.g. 64 hex digits)")
     if production:
@@ -334,3 +355,17 @@ def load_secret_key(instance_path: str, production: bool = False) -> str:
     path.write_text(key, encoding="utf-8")
     return key
 
+
+
+def load_data_keyring(config: Mapping[str, Any], instance_path: str, production: bool = False):
+    """SEC-02b: the keys of the personal-data columns. DATA_KEY(_FILE) first, then the key
+    kept in <data>/.data_key. Outside production that file is created on first start; in
+    production a missing key is an error (`python -m app.data_key init` creates it once),
+    so replicas and restarts never invent a second key."""
+    from .services.fieldcrypt import KEY_FILE, Keyring, load_key_file
+
+    current = (config.get("DATA_KEY") or "").strip() or load_key_file(instance_path, create=not production)
+    if not current:
+        raise ConfigError([f"DATA_KEY (or DATA_KEY_FILE, or {KEY_FILE} in the data folder) is required in production: "
+                           "create it once with `python -m app.data_key init` and keep a copy in the password manager"])
+    return Keyring.from_values(current, (config.get("DATA_KEY_OLD") or "").split(","))

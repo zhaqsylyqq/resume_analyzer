@@ -85,7 +85,8 @@ def test_enable_shows_qr_and_recovery_codes(app, client):
     assert bad.status_code == 400
     secret, codes = _enable_2fa(app, client)
     user = _user(app, "tester")
-    assert user["totp_secret"] == secret and len(codes) == 10
+    assert storage.totp_secret(user) == secret and len(codes) == 10
+    assert user["totp_secret"].startswith("enc1:") and secret not in user["totp_secret"]  # SEC-02b: stored encrypted
     assert len(json.loads(user["recovery_codes"])) == 10
     assert codes[0] not in user["recovery_codes"]  # only hashes are stored
     assert client.get("/account").status_code == 200  # this session stays signed in

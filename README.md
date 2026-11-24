@@ -174,7 +174,7 @@ replaced by a default. Check the configuration without starting anything:
 python -m app.check_config      # prints every setting, secrets only as "set" / "not set"
 ```
 
-Secrets (`FLASK_SECRET_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `INVITE_CODE`, `BACKUP_KEY`, `DATABASE_URL`) can also be
+Secrets (`FLASK_SECRET_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `INVITE_CODE`, `BACKUP_KEY`, `DATABASE_URL`, `DATA_KEY`) can also be
 read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kubernetes secrets).
 
 | Variable | Default | Purpose |
@@ -206,6 +206,8 @@ read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kube
 | `DAILY_RESUME_LIMIT` | `30` | Initial limit of resumes per recruiter per 24 hours (0 = none); admins change it in the app |
 | `DAILY_AI_CHECK_LIMIT` | `20` | Initial limit of AI vacancy checks per recruiter per 24 hours (0 = none); the dictionary check always runs; admins change it in the app |
 | `BACKUP_OFFSITE_DIR` | empty | Folder outside this disk for encrypted backups (`flask --app app backup-offsite`) |
+| `DATA_KEY` | empty (`<data>/.data_key`) | SEC-02b: key of the personal data in the database (base64, 32 bytes). Outside production the key file is created on first start; in production set it or run `python -m app.data_key init` once. Keep a copy in the password manager |
+| `DATA_KEY_OLD` | empty | Previous keys (comma-separated) while rotating: data under them is re-encrypted with `DATA_KEY` at start-up |
 | `BACKUP_KEY` | empty | Key for encrypted backups (checked at start-up); create with `flask --app app generate-backup-key` |
 | `STATS_UTC_OFFSET` | `5` | Hours added to UTC when statistics group events by day (Kazakhstan: 5) |
 | `STARTER_SESSION` | `1` | Give every new user an example session with a Python vacancy (`0` = off) |

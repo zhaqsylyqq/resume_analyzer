@@ -14,6 +14,10 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 # Tests must never touch it: empty values win over .env (python-dotenv never overrides them).
 for _name in ("DATABASE_URL", "DATABASE_URL_FILE", "BACKUP_RESTORE_URL", "BACKUP_RESTORE_URL_FILE"):
     os.environ[_name] = ""
+# SEC-02b: a fixed test data key, so no test creates or reads <instance>/.data_key (on the
+# laptop that is the live data folder) and a developer's DATA_KEY never encrypts test data.
+TEST_DATA_KEY = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
+os.environ.update(DATA_KEY=TEST_DATA_KEY, DATA_KEY_FILE="", DATA_KEY_OLD="", DATA_KEY_OLD_FILE="")
 ON_POSTGRES = bool(TEST_DATABASE_URL)
 PG_TABLES = ("rate_counters", "rate_locks", "password_resets", "llm_usage", "candidate_status", "audit_log", "settings", "scores",
              "demographics", "resumes", "vacancies", "sessions", "users")

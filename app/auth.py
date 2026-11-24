@@ -96,7 +96,7 @@ def _fingerprint(password_hash: str, totp_secret: str | None = None) -> str:
 
 
 def fingerprint(user) -> str:
-    return _fingerprint(user["password_hash"], user["totp_secret"])
+    return _fingerprint(user["password_hash"], storage.totp_secret(user))
 
 
 def validate_username(username: str) -> str | None:
@@ -358,7 +358,7 @@ def login_verify():
     db = storage.get_db()
     code = request.form.get("code", "").strip()
     method = None
-    step = totp.verify(user["totp_secret"], code, user["totp_last_step"])
+    step = totp.verify(storage.totp_secret(user) or "", code, user["totp_last_step"])
     if step is not None:
         storage.update_user(db, user["id"], totp_last_step=step)
         method = "2fa"
@@ -641,7 +641,7 @@ def update_user(user_id: int):
         new_hash = hash_password(password)
         storage.update_user(db, user_id, password_hash=new_hash)
         if is_self:  # keep the admin signed in after changing their own password
-            session["pw"] = _fingerprint(new_hash, user["totp_secret"])
+            session["pw"] = _fingerprint(new_hash, storage.totp_secret(user))
         detail = f"{user['username']}: password changed"
     elif action == "reset_link":
         # SEC-01: a one-time link the admin passes to the user (there is no e-mail sending).

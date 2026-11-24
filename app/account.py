@@ -36,7 +36,7 @@ def _reload_and_keep_signed_in() -> None:
     user = storage.get_user(storage.get_db(), g.user["id"])
     assert user is not None  # signed in a moment ago  # noqa: S101
     g.user = user
-    session["pw"] = _fingerprint(user["password_hash"], user["totp_secret"])
+    session["pw"] = _fingerprint(user["password_hash"], storage.totp_secret(user))
 
 
 @bp.get("")
@@ -101,7 +101,7 @@ def _check_password_and_code(errors: dict[str, str], what: str) -> int | None:
         errors["current"] = "account.error.current"
         storage.audit(storage.get_db(), "mfa_failed", user, detail=f"{what}: wrong password")
         return None
-    step = totp.verify(user["totp_secret"], request.form.get("code", ""), user["totp_last_step"])
+    step = totp.verify(storage.totp_secret(user) or "", request.form.get("code", ""), user["totp_last_step"])
     if step is None:
         errors["code"] = "mfa.error.code"
         storage.audit(storage.get_db(), "mfa_failed", user, detail=f"{what}: wrong code")
