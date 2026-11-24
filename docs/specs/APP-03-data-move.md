@@ -32,11 +32,19 @@ The same commands work on both engines:
   of the child process only.
 - `BACKUP_RESTORE_URL` must differ from `DATABASE_URL` (checked by the configuration); it is wiped.
 - Rotation keeps the newest 30 copies of both kinds together; the USB-drive task needs no change.
+- Client tools of the **server's major version** are used (fix of 2026-11-24): `PG_BIN_DIR`,
+  then `/usr/lib/postgresql/<N>/bin` or `C:\Program Files\PostgreSQL\<N>\bin`, then `PATH`.
+  A newer `pg_restore` cannot restore into an older server (pg_restore 17+ sends
+  `SET transaction_timeout`, unknown to 16); `restore-check` then stops with
+  "pg_restore 18 cannot restore into PostgreSQL 16: install the PostgreSQL 16 client tools…".
 
 ## CI
 
 - The PostgreSQL job now also creates `hrscreen_restore` and runs the backup and move tests
   with real `pg_dump`/`pg_restore`.
+- That job runs on `ubuntu-24.04` (PostgreSQL 16 tools, like the server); `ubuntu-latest`
+  became 26.04 with only PostgreSQL 18 tools, and the two restore tests failed there from
+  APP-02 on. A step checks that `/usr/lib/postgresql/16/bin/pg_restore` is present.
 - Coverage: each engine alone covers less (the other engine's branches), so the 90 % floor is
   enforced on the **combined** SQLite + PostgreSQL data in the new job
   "Coverage (both engines)" (locally one engine: 85 %). Measured combined: 94 %.
