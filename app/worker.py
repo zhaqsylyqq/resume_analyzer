@@ -3,7 +3,7 @@
 With WORKER_MODE=external the web process only saves uploaded resumes as `pending`; one or
 more worker processes (on the same machine or other ones) analyze them:
 
-- each worker runs `--threads` threads (default GEMINI_CONCURRENCY), each in a loop:
+- each worker runs `--threads` threads (default LLM_CONCURRENCY), each in a loop:
   pick the next session with pending resumes (round-robin, so a small batch is not stuck
   behind a big one, as Q1), claim ONE resume atomically (PostgreSQL: FOR UPDATE SKIP LOCKED,
   so several workers never take the same resume), analyze it, repeat; when the queue is
@@ -30,14 +30,14 @@ from flask import Flask, current_app
 from flask.cli import with_appcontext
 
 from .services import jobs, storage
-from .services.gemini import GeminiError, GeminiService, UsageCounter, get_gemini
+from .services.llm import GeminiError, LLMService, UsageCounter, get_llm
 
 log = logging.getLogger("app.worker")
 REQUEUE_EVERY = 60.0
 
 
 class Worker:
-    def __init__(self, app: Flask, service: GeminiService, threads: int) -> None:
+    def __init__(self, app: Flask, service: LLMService, threads: int) -> None:
         self.app = app
         self.service = service
         self.threads = max(1, threads)
@@ -151,18 +151,18 @@ class Worker:
 
 @click.command("worker")
 @click.option("--threads", type=click.IntRange(min=1, max=16), default=None,
-              help="Parallel analyses in this process (default: GEMINI_CONCURRENCY).")
+              help="Parallel analyses in this process (default: LLM_CONCURRENCY).")
 @with_appcontext
 def worker_command(threads: int | None) -> None:
     """Analyze pending resumes until stopped (use with WORKER_MODE=external)."""
     app = current_app._get_current_object()  # type: ignore[attr-defined]
     try:
-        service = get_gemini()
+        service = get_llm()
     except GeminiError as exc:
         raise click.ClickException(f"AI provider not configured: {exc}") from None
     if not jobs.external(app):
         click.echo("Note: WORKER_MODE is not 'external'; the web process analyzes resumes too.", err=True)
-    worker = Worker(app, service, threads or int(app.config["GEMINI_CONCURRENCY"]))
+    worker = Worker(app, service, threads or int(app.config["LLM_CONCURRENCY"]))
 
     def stop(signum: int, _frame: Any) -> None:
         log.info("Received %s: finishing resumes in hand (up to %ss)", signal.Signals(signum).name,

@@ -20,7 +20,7 @@ from .services import ratelimit
 
 
 def _key(name: str, by: str) -> str:
-    from .auth import client_ip
+    from .auth.limits import client_ip
 
     user = g.get("user")
     if by == "user" and user is not None:

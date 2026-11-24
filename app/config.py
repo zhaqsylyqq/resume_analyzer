@@ -116,7 +116,8 @@ class Settings:
             "GEMINI_API_KEY": self.gemini_api_key,
             "GEMINI_MODEL": self.gemini_model,
             "GEMINI_FALLBACK_MODEL": self.gemini_fallback_model,
-            "GEMINI_CONCURRENCY": self.gemini_concurrency,
+            "LLM_CONCURRENCY": self.gemini_concurrency,
+            "GEMINI_CONCURRENCY": self.gemini_concurrency,  # pre-APP-10 name, same value
             "GEMINI_MAX_RETRIES": self.gemini_max_retries,
             "RETENTION_DAYS": self.retention_days,
             "INVITE_CODE": self.invite_code,
@@ -267,7 +268,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         gemini_api_key=r.secret("GEMINI_API_KEY"),
         gemini_model=r.text("GEMINI_MODEL"),
         gemini_fallback_model=r.text("GEMINI_FALLBACK_MODEL"),
-        gemini_concurrency=r.integer("GEMINI_CONCURRENCY", 2, minimum=1, maximum=16),
+        # APP-10: LLM_CONCURRENCY; the old name GEMINI_CONCURRENCY still works when the new one is unset
+        gemini_concurrency=r.integer("LLM_CONCURRENCY" if r.text("LLM_CONCURRENCY") else "GEMINI_CONCURRENCY",
+                                     2, minimum=1, maximum=16),
         gemini_max_retries=r.integer("GEMINI_MAX_RETRIES", 5, minimum=0, maximum=20),
         retention_days=r.integer("RETENTION_DAYS", 90, minimum=0),
         invite_code=r.secret("INVITE_CODE"),

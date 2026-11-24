@@ -11,7 +11,11 @@ def app_with_post(app):
         return {"ok": True}
 
     app.register_blueprint(bp)
-    return app
+    from app import policy
+
+    policy.declare("probe.probe", policy.SIGNED_IN)  # APP-10: every route needs a rule
+    yield app
+    policy.RULES.pop("probe.probe", None)
 
 
 def test_security_headers_present(client):
@@ -86,16 +90,16 @@ def test_request_scheme_and_external_urls_follow_the_trusted_proxy(app):
 
     app.register_blueprint(bp)
     app.config["TRUSTED_PROXIES"] = ("127.0.0.1",)
-    import app.auth as auth
-    from app.auth import PUBLIC_ENDPOINTS  # the probe is outside login: call it as a public endpoint
-    auth.PUBLIC_ENDPOINTS = PUBLIC_ENDPOINTS | {"scheme_probe.scheme"}
+    from app import policy
+
+    policy.declare("scheme_probe.scheme", policy.PUBLIC)  # APP-10: every route needs a rule
     try:
         c = app.test_client()
         behind = c.get("/_scheme", headers={"X-Forwarded-Proto": "https", "Host": "hrscreen.date"}).get_json()
         direct = c.get("/_scheme", headers={"X-Forwarded-Proto": "https"},
                        environ_base={"REMOTE_ADDR": "203.0.113.9"}).get_json()
     finally:
-        auth.PUBLIC_ENDPOINTS = PUBLIC_ENDPOINTS
+        policy.RULES.pop("scheme_probe.scheme", None)
     assert behind == {"scheme": "https", "url": "https://hrscreen.date/login"}
     assert direct["scheme"] == "http"
 

@@ -11,7 +11,7 @@ import json
 
 from flask import Blueprint, flash, g, redirect, render_template, request, session, url_for
 
-from .auth import _fingerprint, hash_password, validate_password, verify_password
+from .auth.passwords import _fingerprint, hash_password, validate_password, verify_password
 from .ratelimits import rate_limited
 from .services import storage, totp
 

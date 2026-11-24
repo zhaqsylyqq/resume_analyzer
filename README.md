@@ -198,7 +198,7 @@ read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kube
 | `GEMINI_API_KEY` | — (required for Gemini) | Gemini API key |
 | `GEMINI_MODEL` | — (required for Gemini) | Main model, e.g. `gemini-3.5-flash-lite` |
 | `GEMINI_FALLBACK_MODEL` | empty | Comma-separated chain tried while the main model is rate-limited, overloaded or out of daily quota |
-| `GEMINI_CONCURRENCY` | `2` | Parallel AI requests, for either provider |
+| `LLM_CONCURRENCY` | `2` | Parallel AI requests, for either provider (the old name `GEMINI_CONCURRENCY` still works) |
 | `GEMINI_MAX_RETRIES` | `5` | Retries on 429/5xx before a resume is marked failed, for either provider |
 | `FLASK_SECRET_KEY` | generated | Session secret (at least 32 characters); outside production it is generated into `instance/.secret_key` if unset |
 | `SESSION_COOKIE_SECURE` | `0`; `1` in production | Cookies only over HTTPS; cannot be `0` in production |
@@ -381,7 +381,7 @@ vacancy text ─► lexicon + optional Gemini review ─► bias report (B1)
 - **Reliability.** JSON mode with a response schema, pydantic validation, one retry on
   invalid output, then `analysis_failed` without stopping the batch. 429/503 put that model
   on a shared cooldown and traffic switches to the fallback model immediately.
-- **Fair queue.** One pool of `GEMINI_CONCURRENCY` workers serves all sessions in turn,
+- **Fair queue.** One pool of `LLM_CONCURRENCY` workers serves all sessions in turn,
   one resume at a time, so a small batch is not stuck behind a big one. The session page
   shows the time remaining, estimated from the last 20 analyzed resumes.
 - **Append-only.** Files are de-duplicated by SHA-256 per session; adding a vacancy scores

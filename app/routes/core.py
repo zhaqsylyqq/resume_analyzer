@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request
 
-from ..auth import owner_filter
 from ..i18n import LANG_COOKIE
+from ..policy import owner_filter
 from ..security import is_safe_redirect
 from ..services import jobs, storage
 from ..services.db import DatabaseError

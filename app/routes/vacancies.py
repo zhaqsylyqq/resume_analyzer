@@ -9,12 +9,13 @@ from urllib.parse import quote
 
 from flask import Blueprint, Response, abort, current_app, flash, g, jsonify, redirect, render_template, request, url_for
 
-from ..auth import current_settings, is_admin
 from ..i18n import get_locale, translate
+from ..policy import is_admin
 from ..ratelimits import rate_limited
 from ..services import bias, diversity, jobs, scoring, storage
 from ..services import export as exporter
-from ..services.gemini import GeminiError, get_gemini
+from ..services.llm import GeminiError, get_llm
+from ..settings import current as current_settings
 from .screening import start_analysis
 from .sessions import MAX_VACANCIES, MAX_VACANCY_TEXT, load_session_or_404, validate_vacancy
 
@@ -31,7 +32,7 @@ def _load(session_id: int, vacancy_id: int):
 
 def _gemini_or_none():
     try:
-        return get_gemini()
+        return get_llm()
     except GeminiError:
         return None
 

@@ -1,6 +1,6 @@
 """Background analysis with a fair, round-robin queue across sessions (Q1).
 
-One process-wide pool of GEMINI_CONCURRENCY worker threads serves every session. Sessions
+One process-wide pool of LLM_CONCURRENCY worker threads serves every session. Sessions
 with queued resumes form a rotation; a worker takes the next session, moves it to the back
 and analyzes one of its resumes, so sessions take turns resume by resume and a small batch
 is not stuck behind a big one. Per-resume failures are recorded and never stop a batch.
@@ -18,15 +18,15 @@ from dataclasses import dataclass, field
 from flask import Flask, current_app, has_app_context
 
 from . import storage
-from .gemini import (
+from .llm import (
     AnalysisFailed,
     BillingExhausted,
     GeminiError,
-    GeminiService,
     GeminiUnavailable,
+    LLMService,
     QuotaExhausted,
     UsageCounter,
-    get_gemini,
+    get_llm,
     usage_scope,
 )
 from .parsing import parse_file
@@ -97,7 +97,7 @@ def is_running(session_id: int) -> bool:
 def start(session_id: int) -> bool:
     """Queue a session for analysis; returns False if it was already queued."""
     app = current_app._get_current_object()  # type: ignore[attr-defined]
-    service = get_gemini()
+    service = get_llm()
     if external(app):
         return True  # the resumes are pending in the database; a worker process takes them
     if _draining.is_set():
@@ -130,7 +130,7 @@ def resume_pending(app: Flask) -> list[int]:
         if not session_ids:
             return []
         try:
-            get_gemini()
+            get_llm()
         except GeminiError as exc:
             log.warning("Pending resumes not resumed: %s", exc)
             return []
@@ -140,16 +140,16 @@ def resume_pending(app: Flask) -> list[int]:
     return session_ids
 
 
-def _spawn_workers(app: Flask, service: GeminiService) -> None:
+def _spawn_workers(app: Flask, service: LLMService) -> None:
     global _workers
     with _lock:
-        wanted = max(1, app.config["GEMINI_CONCURRENCY"]) - _workers
+        wanted = max(1, app.config["LLM_CONCURRENCY"]) - _workers
         _workers += max(0, wanted)
     for i in range(max(0, wanted)):
         threading.Thread(target=_worker_thread, args=(app, service), name=f"analysis-{i}", daemon=True).start()
 
 
-def _worker_thread(app: Flask, service: GeminiService) -> None:
+def _worker_thread(app: Flask, service: LLMService) -> None:
     global _workers
     try:
         _worker(app, service)
@@ -163,7 +163,7 @@ def _worker_thread(app: Flask, service: GeminiService) -> None:
             _spawn_workers(app, service)
 
 
-def _worker(app: Flask, service: GeminiService) -> None:
+def _worker(app: Flask, service: LLMService) -> None:
     """Take turns between sessions until no session has pending resumes."""
     try:
         with app.app_context():
@@ -177,7 +177,7 @@ def _worker(app: Flask, service: GeminiService) -> None:
         log.exception("Analysis worker crashed")
 
 
-def _work_once(app: Flask, service: GeminiService, db) -> bool:
+def _work_once(app: Flask, service: LLMService, db) -> bool:
     """Analyze one resume of the next session in the rotation; False when idle."""
     with _lock:
         if not _rotation or _draining.is_set():
@@ -256,13 +256,13 @@ def _remaining(db) -> dict[int, int]:
     return {row["session_id"]: row["n"] for row in rows}
 
 
-def _analyze(app: Flask, service: GeminiService, resume_id: int, language: str,
+def _analyze(app: Flask, service: LLMService, resume_id: int, language: str,
              usage: UsageCounter | None = None) -> None:
     with usage_scope(usage or UsageCounter()):
         _analyze_one(app, service, resume_id, language)
 
 
-def _analyze_one(app: Flask, service: GeminiService, resume_id: int, language: str) -> None:
+def _analyze_one(app: Flask, service: LLMService, resume_id: int, language: str) -> None:
     db = storage.connect(app.config["DATABASE"])
     try:
         row = storage.get_resume(db, resume_id)

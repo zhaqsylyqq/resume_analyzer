@@ -92,9 +92,9 @@ def fast_password_hashing(monkeypatch):
     """Argon2 with production parameters is deliberately slow; tests use cheap ones."""
     from argon2 import PasswordHasher
 
-    import app.auth as auth
+    from app.auth import passwords
 
-    monkeypatch.setattr(auth, "_hasher", PasswordHasher(time_cost=1, memory_cost=8, parallelism=1))
+    monkeypatch.setattr(passwords, "_hasher", PasswordHasher(time_cost=1, memory_cost=8, parallelism=1))
 
 
 TEST_PASSWORD = "correct-horse-battery"

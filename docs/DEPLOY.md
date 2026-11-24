@@ -12,7 +12,7 @@ stay the same.
 | Domain | `hrscreen.date`, registered at Cloudflare Registrar in the owner's Cloudflare account; DNS on Cloudflare |
 | Tunnel | Named tunnel `hrscreen`; the DNS record `hrscreen.date` points to it (the tunnel id is in the owner's Cloudflare dashboard, not in this public repository) |
 | AI | DeepSeek (`LLM_PROVIDER=deepseek`, `deepseek-flash`), prepaid balance of about $5; about $0.001 per resume |
-| Sign-in | Personal accounts with roles (A1, `app/auth.py`). Admins open registration with an invite code on the users page (see [`TEAMMATE.md`](../TEAMMATE.md)) |
+| Sign-in | Personal accounts with roles (A1, `app/auth/`, access rules in `app/policy.py`). Admins open registration with an invite code on the users page (see [`TEAMMATE.md`](../TEAMMATE.md)) |
 | Cloudflare Access | Not used (the app's own login covers it) |
 | Laptop runner | `scripts/serve_public.ps1`: waitress on 127.0.0.1:8000 plus `cloudflared tunnel run` |
 

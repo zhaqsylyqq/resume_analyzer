@@ -58,3 +58,12 @@ def save(db: Database, value: AppSettings) -> None:
         "daily_limit": str(value.daily_limit),
         "ai_check_limit": str(value.ai_check_limit),
     })
+
+
+def current() -> AppSettings:
+    """The settings of this request (loaded once per request; APP-10: moved from auth)."""
+    from flask import current_app, g
+
+    if "app_settings" not in g:
+        g.app_settings = load(storage.get_db(), current_app.config)
+    return g.app_settings

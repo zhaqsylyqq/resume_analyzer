@@ -6,8 +6,8 @@ from typing import Any
 
 from flask import Blueprint, abort, current_app, g, jsonify, redirect, render_template, request, url_for
 
-from ..auth import can_access, deny, owner_filter
 from ..i18n import get_locale, translate
+from ..policy import can_access, deny, owner_filter
 from ..ratelimits import rate_limited
 from ..services import bias, jobs, storage
 
@@ -133,7 +133,7 @@ def _eta(db, session_id: int) -> dict[str, Any] | None:
     """Q1: time remaining as seconds plus a localized label; None when idle."""
     if not jobs.is_running(session_id):
         return None
-    seconds = jobs.eta_seconds(db, session_id, current_app.config["GEMINI_CONCURRENCY"])
+    seconds = jobs.eta_seconds(db, session_id, current_app.config["LLM_CONCURRENCY"])
     if seconds is None:
         return {"seconds": None, "label": translate("eta.estimating")}
     minutes = -(-seconds // 60)  # round up

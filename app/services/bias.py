@@ -18,7 +18,7 @@ from typing import Any
 
 from markupsafe import Markup, escape
 
-from .gemini import LANGUAGE_NAMES, GeminiError, GeminiService, fence, load_prompt
+from .llm import LANGUAGE_NAMES, GeminiError, LLMService, fence, load_prompt
 from .schemas import BiasReport
 
 log = logging.getLogger(__name__)
@@ -165,7 +165,7 @@ def _merge(findings: list[Finding]) -> list[Finding]:
     return sorted(kept, key=lambda f: f.start)
 
 
-def check(text: str, language: str = "ru", service: GeminiService | None = None) -> dict[str, Any]:
+def check(text: str, language: str = "ru", service: LLMService | None = None) -> dict[str, Any]:
     """Return a JSON-serializable report. Uses Gemini when a service is given."""
     findings = rule_findings(text)
     rewrite, ai_checked = "", False
@@ -193,7 +193,7 @@ def check(text: str, language: str = "ru", service: GeminiService | None = None)
     }
 
 
-def _ai_report(service: GeminiService, text: str, language: str) -> BiasReport:
+def _ai_report(service: LLMService, text: str, language: str) -> BiasReport:
     system = load_prompt("bias_system").substitute(language=LANGUAGE_NAMES.get(language, "Russian"))
     user = load_prompt("bias_user").substitute(vacancy=fence(text, "vacancy"))
     return service.generate(system, user, BiasReport)
