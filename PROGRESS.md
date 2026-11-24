@@ -24,6 +24,7 @@
 | 18 | S3 example session for new users + delete a vacancy | done |
 | 20 | S5 user feedback: “Подходят” tile filter, mobile layout, score colours | done |
 | 19 | S4 (SIS 10-11): real client IP behind the tunnel, unique email, audit de-dup; CR-01 candidate pipeline | done |
+| 35 | SEC-03: append-only audit log (triggers on both engines, `db-app-role` for a least-privilege app role), each event also a JSON log line, new events (access denied, 2FA and password failures, recovery code, reset links), admin page with pages and filters ([spec](docs/specs/SEC-03-audit.md)) | done; laptop role switch pending |
 | 34 | CI fix: "Tests on PostgreSQL" was red since APP-02 — `ubuntu-latest` (26.04) has only PostgreSQL 18 tools and pg_restore 18 cannot restore into 16. Backups now use the client tools of the server's major version (clear error otherwise); the job runs on `ubuntu-24.04` ([spec](docs/specs/APP-03-data-move.md)) | done |
 | 33 | APP-06/07: rate-limit counters in the app database (shared by all processes, no Redis); 429 + Retry-After on uploads, analysis, AI checks, exports, password reset and account secrets ([spec](docs/specs/APP-06-07-rate-limits.md)) | done |
 | 32 | APP-05: with external workers the upload only stores the file; the worker extracts the text, drops the file afterwards; migration 0002 ([spec](docs/specs/APP-05-parsing-in-worker.md)) | done |

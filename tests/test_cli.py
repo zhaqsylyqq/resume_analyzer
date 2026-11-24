@@ -83,7 +83,7 @@ def test_db_check(app, runner, client, csrf, fake_gemini):
     upload(client, csrf, session_id, [("a.txt", resume_text(1))])
     result = runner.invoke(args=["db-check"])
     assert result.exit_code == 0, result.output
-    assert "integrity ok" in result.output or "schema 0003_rate_limits" in result.output
+    assert "integrity ok" in result.output or "schema 0004_audit_append_only" in result.output
     assert "sessions 1" in result.output and "resumes 1" in result.output
     assert "Resumes by status: done 1" in result.output
     assert "Sessions waiting for analysis: 0" in result.output

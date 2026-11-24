@@ -10,6 +10,7 @@ and the audit log belong to A1 (login and roles).
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
@@ -18,6 +19,8 @@ from flask import Flask, current_app, g
 from . import db as dbapi
 from .db import Database
 from .schemas import CandidateProfile, FitAssessment
+
+audit_logger = logging.getLogger("hrscreen.audit")
 
 # Resume statuses
 PENDING = "pending"
@@ -137,6 +140,15 @@ CREATE INDEX IF NOT EXISTS idx_scores_vacancy ON scores(vacancy_id, score DESC);
 """
 
 
+# SEC-03: the audit log is append-only (PostgreSQL: migration 0004 with the same rule).
+AUDIT_GUARD = """
+CREATE TRIGGER IF NOT EXISTS audit_log_no_update BEFORE UPDATE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit_log is append-only (SEC-03): UPDATE is not allowed'); END;
+CREATE TRIGGER IF NOT EXISTS audit_log_no_delete BEFORE DELETE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit_log is append-only (SEC-03): DELETE is not allowed'); END;
+"""
+
+
 def _rowid(row: Any) -> int:
     """The id from `INSERT … RETURNING id` (works on SQLite ≥ 3.35 and PostgreSQL)."""
     if row is None:
@@ -176,6 +188,7 @@ def init_db(app: Flask) -> None:
         if not db.is_postgres:
             db.raw.executescript(SCHEMA)
             _migrate(db)
+            db.raw.executescript(AUDIT_GUARD)
         # Work interrupted by a restart goes back to the queue. With separate worker processes
         # (APP-04) a web restart must not take resumes away from running workers: they requeue
         # only stale ones (storage.requeue_stale).
@@ -695,12 +708,20 @@ def use_password_reset(db: Database, token_hash: str, password_hash: str) -> boo
 
 def audit(db: Database, action: str, user: Any | None = None, session_id: int | None = None,
           detail: str | None = None, username: str | None = None) -> None:
+    """SEC-03: one row in the append-only audit_log and the same event as a structured (JSON)
+    log line on the `hrscreen.audit` logger, so it also reaches the central logs (OBS-02)."""
+    event = {
+        "created_at": now(), "user_id": user["id"] if user else None,
+        "username": user["username"] if user else username, "action": action,
+        "session_id": session_id, "detail": (detail or "")[:500] or None,
+    }
     with db:
-        db.execute(
-            "INSERT INTO audit_log (created_at, user_id, username, action, session_id, detail) VALUES (?, ?, ?, ?, ?, ?)",
-            (now(), user["id"] if user else None, user["username"] if user else username, action, session_id,
-             (detail or "")[:500] or None),
-        )
+        event_id = _rowid(db.execute(
+            "INSERT INTO audit_log (created_at, user_id, username, action, session_id, detail) "
+            "VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+            (event["created_at"], event["user_id"], event["username"], action, session_id, event["detail"]),
+        ).fetchone())
+    audit_logger.info("audit %s", json.dumps({"event": "audit", "id": event_id, **event}, ensure_ascii=False))
 
 
 def audit_once(db: Database, action: str, user: Any | None, session_id: int | None,
@@ -720,3 +741,26 @@ def audit_once(db: Database, action: str, user: Any | None, session_id: int | No
 
 def list_audit(db: Database, limit: int = 200) -> list[Any]:
     return db.execute("SELECT * FROM audit_log ORDER BY created_at DESC, id DESC LIMIT ?", (limit,)).fetchall()
+
+
+def search_audit(db: Database, *, action: str | None = None, username: str | None = None,
+                 since: str | None = None, until: str | None = None, offset: int = 0,
+                 limit: int = 50) -> list[Any]:
+    """SEC-03: one page of the audit log, newest first. `since`/`until` are ISO UTC bounds
+    (`since` included, `until` excluded); `username` matches whole names, any letter case."""
+    where, params = [], []
+    if action:
+        where.append("action = ?")
+        params.append(action)
+    if username:
+        where.append("LOWER(username) = LOWER(?)")
+        params.append(username)
+    if since:
+        where.append("created_at >= ?")
+        params.append(since)
+    if until:
+        where.append("created_at < ?")
+        params.append(until)
+    # Only the fixed fragments above go into the text; every value is a parameter.
+    sql = "SELECT * FROM audit_log" + (" WHERE " + " AND ".join(where) if where else "")  # noqa: S608
+    return db.execute(sql + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?", (*params, limit, offset)).fetchall()

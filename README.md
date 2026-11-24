@@ -184,6 +184,7 @@ read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kube
 | `BACKUP_RESTORE_URL` | empty | Scratch PostgreSQL database where `restore-check` restores a copy to prove it (wiped every time; never the live one) |
 | `PG_BIN_DIR` | PATH, then `C:\Program Files\PostgreSQL\16\bin` | Folder with `pg_dump` / `pg_restore` for PostgreSQL backups |
 | `DATABASE_URL` | empty (SQLite) | `postgresql://user:password@host:5432/db`: use PostgreSQL; the schema is migrated at start-up (Alembic). Shown in reports with the password masked |
+| `DATABASE_OWNER_URL` | empty | Only for `flask --app app db-app-role ROLE` (SEC-03): the owner's `postgresql://` URL when the app signs in as a limited role |
 | `ADMIN_MFA_REQUIRED` | `0` | `1` = admins must switch on two-factor sign-in before using the app |
 | `WORKER_MODE` | `inline` | `inline`: analysis threads inside the web process (the laptop). `external`: run `flask --app app worker` processes; the web process only queues |
 | `WORKER_POLL_SECONDS` | `2` | Idle worker checks the queue this often |

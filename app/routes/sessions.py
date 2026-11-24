@@ -6,7 +6,7 @@ from typing import Any
 
 from flask import Blueprint, abort, current_app, g, jsonify, redirect, render_template, request, url_for
 
-from ..auth import can_access, owner_filter
+from ..auth import can_access, deny, owner_filter
 from ..i18n import get_locale, translate
 from ..ratelimits import rate_limited
 from ..services import bias, jobs, storage
@@ -22,8 +22,10 @@ MAX_VACANCY_TEXT = 20_000
 def load_session_or_404(session_id: int):
     """The session if the signed-in user may see it; 404 otherwise (never 403: no hints)."""
     session = storage.get_session(storage.get_db(), session_id)
-    if session is None or not can_access(session):
+    if session is None:
         abort(404)
+    if not can_access(session):
+        deny(session_id)  # SEC-03: logged as access_denied
     return session
 
 

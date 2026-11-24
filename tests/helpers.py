@@ -28,3 +28,17 @@ def resume_text(i: int) -> bytes:
 
 def status(client, session_id):
     return client.get(f"/sessions/{session_id}/status").get_json()
+
+
+def clear_audit(db):
+    """Empty the append-only audit log (SEC-03) for a test: lift the guard, delete, restore it."""
+    from app.services import storage
+
+    if db.is_postgres:
+        with db:
+            db.execute("ALTER TABLE audit_log DISABLE TRIGGER audit_log_no_change")
+            db.execute("DELETE FROM audit_log")
+            db.execute("ALTER TABLE audit_log ENABLE TRIGGER audit_log_no_change")
+    else:
+        db.commit()
+        db.raw.executescript("DROP TRIGGER audit_log_no_delete; DELETE FROM audit_log;" + storage.AUDIT_GUARD)

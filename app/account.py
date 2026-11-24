@@ -57,6 +57,8 @@ def change_password():
     elif new != request.form.get("password2", ""):
         errors["password2"] = "register.error.mismatch"
     if errors:
+        if "pw_current" in errors:  # SEC-03: a wrong current password is worth a record
+            storage.audit(db, "password_change_failed", user, detail="wrong current password")
         return _page(400, errors)
     storage.update_user(db, user["id"], password_hash=hash_password(new))
     storage.audit(db, "password_change", user)
@@ -81,6 +83,7 @@ def confirm_2fa():
         return redirect(url_for("account.index"))
     step = totp.verify(secret, request.form.get("code", ""), None)
     if step is None:
+        storage.audit(db, "mfa_failed", user, detail="enable: wrong code")
         return _page(400, {"code": "mfa.error.code"})
     codes = totp.generate_recovery_codes()
     storage.update_user(db, user["id"], totp_secret=secret, totp_last_step=step,
@@ -92,14 +95,16 @@ def confirm_2fa():
     return _page(recovery_codes=codes)
 
 
-def _check_password_and_code(errors: dict[str, str]) -> int | None:
+def _check_password_and_code(errors: dict[str, str], what: str) -> int | None:
     user = g.user
     if not verify_password(user["password_hash"], request.form.get("current", "")):
         errors["current"] = "account.error.current"
+        storage.audit(storage.get_db(), "mfa_failed", user, detail=f"{what}: wrong password")
         return None
     step = totp.verify(user["totp_secret"], request.form.get("code", ""), user["totp_last_step"])
     if step is None:
         errors["code"] = "mfa.error.code"
+        storage.audit(storage.get_db(), "mfa_failed", user, detail=f"{what}: wrong code")
     return step
 
 
@@ -110,7 +115,7 @@ def disable_2fa():
     if not user["totp_secret"]:
         return redirect(url_for("account.index"))
     errors: dict[str, str] = {}
-    if _check_password_and_code(errors) is None:
+    if _check_password_and_code(errors, "disable") is None:
         return _page(400, errors)
     storage.update_user(db, user["id"], totp_secret=None, totp_last_step=None, recovery_codes=None)
     storage.audit(db, "mfa_disable", user)
@@ -126,7 +131,7 @@ def new_recovery_codes():
     if not user["totp_secret"]:
         return redirect(url_for("account.index"))
     errors: dict[str, str] = {}
-    step = _check_password_and_code(errors)
+    step = _check_password_and_code(errors, "recovery codes")
     if step is None:
         return _page(400, errors)
     codes = totp.generate_recovery_codes()

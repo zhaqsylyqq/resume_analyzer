@@ -16,9 +16,9 @@ import json
 import re
 import secrets
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import wraps
-from typing import Any, Callable
+from typing import Any, Callable, NoReturn
 
 import click
 from argon2 import PasswordHasher
@@ -216,11 +216,20 @@ def _require_admin_mfa():
     return redirect(url_for("account.index"))
 
 
+def deny(session_id: int | None = None) -> NoReturn:
+    """SEC-03: a signed-in user asked for something that is not theirs. Logged (once per
+    10 minutes for the same user and address), then answered with 404: no hints."""
+    if g.get("user") is not None:
+        storage.audit_once(storage.get_db(), "access_denied", g.user, session_id,
+                           f"{request.method} {request.path} {_client_ip()}")
+    abort(404)
+
+
 def admin_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
         if not is_admin():
-            abort(404)  # do not reveal admin pages to recruiters
+            deny()  # do not reveal admin pages to recruiters
         return view(*args, **kwargs)
 
     return wrapped
@@ -369,6 +378,8 @@ def login_verify():
     target = target if is_safe_redirect(target) else None
     _sign_in(db, storage.get_user(db, user["id"]), method)
     if method == "recovery code":
+        left = len(_recovery_hashes(storage.get_user(db, user["id"])))
+        storage.audit(db, "mfa_recovery_used", user, detail=f"{_client_ip()} {left} code(s) left")
         flash("mfa.recovery_used", "warning")
     return redirect(target or url_for("core.index"))
 
@@ -476,9 +487,11 @@ def reset_password(token: str):
     reset = storage.get_password_reset(db, token_hash)
     if reset is None:
         limiter.fail(ip_key)  # guessing tokens is pointless, but do not offer unlimited tries
+        storage.audit_once(db, "password_reset_failed", None, None, f"{_client_ip()} unknown or expired link")
         return render_template("auth/reset.html", valid=False, error="reset.error.invalid"), 404
     user = storage.get_user(db, reset["user_id"])
     if user is None or not user["active"]:
+        storage.audit_once(db, "password_reset_failed", user, None, f"{_client_ip()} account switched off")
         return render_template("auth/reset.html", valid=False, error="reset.error.invalid"), 404
     if request.method == "GET":
         return render_template("auth/reset.html", valid=True, username=user["username"], error=None)
@@ -489,6 +502,7 @@ def reset_password(token: str):
     if error:
         return render_template("auth/reset.html", valid=True, username=user["username"], error=error), 400
     if not storage.use_password_reset(db, token_hash, hash_password(password)):
+        storage.audit(db, "password_reset_failed", user, detail=f"{_client_ip()} link already used")
         return render_template("auth/reset.html", valid=False, error="reset.error.invalid"), 404
     storage.audit(db, "password_reset", user, detail=_client_ip())
     session.clear()
@@ -632,7 +646,7 @@ def update_user(user_id: int):
     elif action == "reset_link":
         # SEC-01: a one-time link the admin passes to the user (there is no e-mail sending).
         link = create_reset_link(db, user, g.user)
-        storage.audit(db, "user_update", g.user, detail=f"{user['username']}: password reset link created")
+        storage.audit(db, "password_reset_link", g.user, detail=f"{user['username']}: link created")
         return render_template("admin/reset_link.html", target=user, link=link,
                                minutes=int(RESET_LINK_LIFETIME.total_seconds() // 60))
     elif action == "disable_2fa":
@@ -641,7 +655,9 @@ def update_user(user_id: int):
         storage.update_user(db, user_id, totp_secret=None, totp_last_step=None, recovery_codes=None)
         if is_self:
             session["pw"] = _fingerprint(user["password_hash"], None)
-        detail = f"{user['username']}: two-factor sign-in switched off by an admin"
+        storage.audit(db, "mfa_reset", g.user, detail=f"{user['username']}: switched off by an admin")
+        flash("admin.user_updated", "success")
+        return redirect(url_for("auth.users"))
     else:
         abort(400)
     storage.audit(db, "user_update", g.user, detail=detail)
@@ -679,10 +695,53 @@ def stats_xlsx():
     return response
 
 
+AUDIT_PAGE_SIZE = 50
+AUDIT_MAX_PAGE = 10_000
+AUDIT_DANGER = {"login_failed", "session_delete", "access_denied", "mfa_failed", "mfa_reset",
+                "password_change_failed", "password_reset_failed"}
+
+
+def _audit_actions() -> list[str]:
+    """Every action the log knows (each has a label `audit.<action>`)."""
+    from .i18n import TRANSLATIONS
+
+    return sorted(key.split(".", 1)[1] for key in TRANSLATIONS["ru"] if key.startswith("audit."))
+
+
+def _local_day_bound(value: str | None, utc_offset: int, next_day: bool = False) -> str | None:
+    """'2026-11-24' (a local date) -> ISO UTC moment of that local midnight (or the next one)."""
+    try:
+        day = date.fromisoformat((value or "").strip())
+    except ValueError:
+        return None
+    start = datetime.combine(day + timedelta(days=1 if next_day else 0), datetime.min.time())
+    return (start - timedelta(hours=utc_offset)).replace(tzinfo=timezone.utc).isoformat(timespec="seconds")
+
+
 @bp.get("/admin/audit")
 @admin_required
 def audit_log():
-    return render_template("admin/audit.html", entries=storage.list_audit(storage.get_db()))
+    """SEC-03: the whole append-only log, newest first, page by page, with filters."""
+    args, offset = request.args, current_app.config["STATS_UTC_OFFSET"]
+    actions = _audit_actions()
+    filters = {
+        "action": args.get("action", "") if args.get("action", "") in actions else "",
+        "user": args.get("user", "").strip()[:64],
+        "from": args.get("from", "") if _local_day_bound(args.get("from"), offset) else "",
+        "to": args.get("to", "") if _local_day_bound(args.get("to"), offset) else "",
+    }
+    try:
+        page = min(max(int(args.get("page", 1)), 1), AUDIT_MAX_PAGE)
+    except ValueError:
+        page = 1
+    rows = storage.search_audit(
+        storage.get_db(), action=filters["action"] or None, username=filters["user"] or None,
+        since=_local_day_bound(filters["from"], offset), until=_local_day_bound(filters["to"], offset, next_day=True),
+        offset=(page - 1) * AUDIT_PAGE_SIZE, limit=AUDIT_PAGE_SIZE + 1,
+    )
+    active = {k: v for k, v in filters.items() if v}
+    return render_template("admin/audit.html", entries=rows[:AUDIT_PAGE_SIZE], filters=filters, actions=actions,
+                           page=page, has_older=len(rows) > AUDIT_PAGE_SIZE, active=active, danger=AUDIT_DANGER)
 
 
 # CLI ------------------------------------------------------------------------------------------
@@ -721,7 +780,7 @@ def reset_2fa(username: str) -> None:
         if user is None:
             raise click.ClickException(f"User '{username}' not found.")
         storage.update_user(db, user["id"], totp_secret=None, totp_last_step=None, recovery_codes=None)
-        storage.audit(db, "user_update", username="cli", detail=f"{user['username']}: two-factor sign-in switched off")
+        storage.audit(db, "mfa_reset", username="cli", detail=f"{user['username']}: switched off from the command line")
     finally:
         db.close()
     click.echo(f"Two-factor sign-in switched off for '{user['username']}'. They should switch it on again.")
@@ -740,7 +799,7 @@ def reset_link_command(username: str, base_url: str) -> None:
             raise click.ClickException(f"User '{username}' not found.")
         with current_app.test_request_context(base_url=base_url):
             link = create_reset_link(db, user)
-        storage.audit(db, "user_update", username="cli", detail=f"{user['username']}: password reset link created")
+        storage.audit(db, "password_reset_link", username="cli", detail=f"{user['username']}: link created")
     finally:
         db.close()
     click.echo(link)

@@ -9,7 +9,7 @@ from openpyxl import load_workbook
 from app.services import stats, storage
 
 from .conftest import login, make_user
-from .helpers import VACANCY_TEXT, create_session, resume_text, upload
+from .helpers import VACANCY_TEXT, clear_audit, create_session, resume_text, upload
 
 
 def csrf_of(client, path):
@@ -89,7 +89,7 @@ def history(app):
     ids = {name: make_user(app, name) for name in ("aru", "bek", "dina", "erlan")}
     with app.app_context():
         db = storage.get_db()
-        db.execute("DELETE FROM audit_log")
+        clear_audit(db)
         for name, rows in {
             "aru": [("2026-11-01T04:00:00+00:00", "login"), ("2026-11-01T04:05:00+00:00", "session_create"),
                     ("2026-11-01T04:30:00+00:00", "export"), ("2026-11-09T10:00:00+00:00", "login")],
@@ -174,8 +174,7 @@ def test_stats_page_with_an_empty_database(app):
     admin = app.test_client()
     login(admin, "root")
     with app.app_context():
-        storage.get_db().execute("DELETE FROM audit_log")
-        storage.get_db().commit()
+        clear_audit(storage.get_db())
     assert admin.get("/admin/stats?days=30").status_code == 200
 
 

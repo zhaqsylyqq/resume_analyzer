@@ -51,8 +51,11 @@ def _database_for_test(tmp_path, url):
         return str(tmp_path / "test.db")
     import psycopg
 
-    with psycopg.connect(url, autocommit=True) as conn:
+    with psycopg.connect(url, autocommit=True) as conn, conn.transaction():
+        # SEC-03: the audit log refuses TRUNCATE; the owner lifts the guard for this transaction.
+        conn.execute("ALTER TABLE audit_log DISABLE TRIGGER audit_log_no_truncate")
         conn.execute(f"TRUNCATE {', '.join(PG_TABLES)} RESTART IDENTITY CASCADE")
+        conn.execute("ALTER TABLE audit_log ENABLE TRIGGER audit_log_no_truncate")
     return url
 
 

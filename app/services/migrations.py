@@ -58,3 +58,46 @@ def current(url: str) -> str | None:
             return conn.execute(text("SELECT version_num FROM alembic_version")).scalar() if exists else None
     finally:
         engine.dispose()
+
+
+class RoleError(RuntimeError):
+    pass
+
+
+def restrict_app_role(owner_url: str, role: str) -> list[str]:
+    """SEC-03: least privileges for the role the app signs in with. Run as the owner of the
+    tables: the role gets SELECT/INSERT/UPDATE/DELETE on the tables, but only SELECT and INSERT
+    on audit_log and only SELECT on alembic_version; tables of later migrations get the same
+    rights by default. Refuses the owner itself and superusers (rights do not limit them).
+    Returns the statements run."""
+    import psycopg
+    from psycopg import sql
+
+    with psycopg.connect(owner_url, autocommit=False) as conn:
+        found = conn.execute("SELECT rolsuper FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
+        if found is None:
+            raise RoleError(f"role {role!r} does not exist: create it first (CREATE ROLE … LOGIN PASSWORD …)")
+        if found[0]:
+            raise RoleError(f"role {role!r} is a superuser: no privilege limits it; use an ordinary role")
+        owner = conn.execute("SELECT tableowner FROM pg_tables WHERE schemaname = 'public' "
+                             "AND tablename = 'audit_log'").fetchone()
+        if owner is None:
+            raise RoleError("no audit_log table: run db-upgrade first")
+        if owner[0] == role:
+            raise RoleError(f"role {role!r} owns the tables: the app must sign in as another role "
+                            "(the owner keeps every right on its tables)")
+        ident = sql.Identifier(role)
+        statements = [
+            sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(ident),
+            sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}").format(ident),
+            sql.SQL("REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON audit_log FROM {}").format(ident),
+            sql.SQL("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON alembic_version FROM {}").format(ident),
+            sql.SQL("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {}").format(ident),
+            sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE "
+                    "ON TABLES TO {}").format(ident),
+            sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO {}").format(ident),
+        ]
+        for statement in statements:
+            conn.execute(statement)
+        conn.commit()
+        return [statement.as_string(conn) for statement in statements]

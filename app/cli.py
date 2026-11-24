@@ -257,6 +257,28 @@ def db_upgrade_command() -> None:
     click.echo(f"Schema at revision {migrations.current(target)}.")
 
 
+@click.command("db-app-role")
+@click.argument("role")
+@click.option("--owner-url", default=None, envvar="DATABASE_OWNER_URL",
+              help="postgresql:// URL of the tables' owner (default: DATABASE_URL). Asked for if it is not set.")
+@with_appcontext
+def db_app_role_command(role: str, owner_url: str | None) -> None:
+    """SEC-03: limit ROLE (the role the app signs in with) to what the app needs; on audit_log
+    only SELECT and INSERT. Run as the owner of the tables, after db-upgrade."""
+    from .services import migrations
+
+    target = owner_url or current_app.config["DATABASE"]
+    if not dbapi.is_postgres_url(target):
+        raise click.ClickException("PostgreSQL only: SQLite has no roles (its audit log is guarded by triggers)")
+    try:
+        statements = migrations.restrict_app_role(target, role)
+    except Exception as exc:  # noqa: BLE001 - RoleError or a database error: the message is the answer
+        raise click.ClickException(str(exc)) from exc
+    for statement in statements:
+        click.echo(statement)
+    click.echo(f"OK: {role} may read and add audit records, but not change or delete them.")
+
+
 @click.command("db-move")
 @click.option("--from", "sqlite_path", type=click.Path(path_type=Path), default=None,
               help="SQLite file (default: <data>/app.db).")
@@ -306,6 +328,6 @@ def config_check_command() -> None:
 
 def init_cli(app: Flask) -> None:
     for command in (backup_command, backup_offsite_command, backup_auto_command, restore_check_command, db_check_command,
-                    db_upgrade_command, db_move_command,
+                    db_upgrade_command, db_app_role_command, db_move_command,
                     generate_backup_key_command, config_check_command):
         app.cli.add_command(command)
