@@ -29,7 +29,7 @@ def test_which_flask_command_runs(argv, command):
 
 
 def test_backup_and_check_commands_are_read_only():
-    assert {"backup", "backup-offsite", "backup-auto", "restore-check", "db-check"} == READ_ONLY_COMMANDS
+    assert {"backup", "backup-offsite", "backup-auto", "restore-check", "db-check", "routes"} == READ_ONLY_COMMANDS
     assert "worker" not in READ_ONLY_COMMANDS and "db-upgrade" not in READ_ONLY_COMMANDS
 
 

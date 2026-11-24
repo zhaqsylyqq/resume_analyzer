@@ -16,7 +16,9 @@ code nobody had reviewed, and the only copy of the new key was a file on the lap
 `create_app(read_only=…)`. By default the app looks at the `flask` command it runs
 (`app.cli_command`, which understands `flask …`, `flask.exe …` and `python[w] -m flask …`); for
 the commands in `READ_ONLY_COMMANDS` — `backup`, `backup-offsite`, `backup-auto`,
-`restore-check`, `db-check` — it starts read-only:
+`restore-check`, `db-check`, and Flask's own `routes` (added after `flask routes`, run to list
+the URLs, went through a full start-up against the live database: nothing changed, but listing
+routes must not be able to migrate or purge) — it starts read-only:
 
 - no schema migration, no requeue, no encryption pass (`storage.init_db` is skipped);
 - no retention purge at start-up;

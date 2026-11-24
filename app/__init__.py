@@ -22,7 +22,8 @@ from .services import fieldcrypt, storage
 # migration, no encryption pass, no retention purge, no new key file. Incident 2026-11-24: the
 # scheduled `backup-auto` ran newer code that was on the disk for a few minutes and migrated
 # and encrypted the live database.
-READ_ONLY_COMMANDS = frozenset({"backup", "backup-offsite", "backup-auto", "restore-check", "db-check"})
+# `routes` only lists the URLs: looking at the app must not migrate or purge the database.
+READ_ONLY_COMMANDS = frozenset({"backup", "backup-offsite", "backup-auto", "restore-check", "db-check", "routes"})
 _FLASK_OPTIONS_WITH_VALUE = {"-A", "--app", "-e", "--env-file"}
 
 
