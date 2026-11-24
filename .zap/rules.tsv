@@ -1,0 +1,28 @@
+# SEC-04: OWASP ZAP baseline rules for the throw-away copy scanned in .github/workflows/dast.yml.
+# Format: <rule id><TAB><IGNORE|INFO|WARN|FAIL><TAB>(<name>). Rules not listed stay WARN.
+# FAIL: headers and cookie flags the app already sets (security.py, config.py) - a regression.
+# INFO: facts about the site, not problems. IGNORE: not about the app.
+# Triage of every finding: docs/security/threat-model.md, section DAST.
+10010	FAIL	(Cookie No HttpOnly Flag)
+10011	FAIL	(Cookie Without Secure Flag)
+10017	FAIL	(Cross-Domain JavaScript Source File Inclusion)
+10020	FAIL	(Anti-clickjacking Header)
+10021	FAIL	(X-Content-Type-Options Header Missing)
+10023	FAIL	(Information Disclosure - Debug Error Messages)
+10024	FAIL	(Information Disclosure - Sensitive Information in URL)
+10036	FAIL	(Server Leaks Version Information via "Server" HTTP Response Header Field)
+10037	FAIL	(Server Leaks Information via "X-Powered-By" HTTP Response Header Field(s))
+10038	FAIL	(Content Security Policy (CSP) Header Not Set)
+10054	FAIL	(Cookie without SameSite Attribute)
+10063	FAIL	(Permissions Policy Header Not Set)
+10098	FAIL	(Cross-Domain Misconfiguration)
+90004	FAIL	(Insufficient Site Isolation Against Spectre Vulnerability)
+90022	FAIL	(Application Error Disclosure)
+10049	INFO	(Storable and Cacheable Content)
+10050	INFO	(Retrieved from Cache)
+10104	INFO	(User Agent Fuzzer)
+10109	INFO	(Modern Web Application)
+10111	INFO	(Authentication Request Identified)
+10112	INFO	(Session Management Response Identified)
+10113	INFO	(Verification Request Identified)
+10116	IGNORE	(ZAP is Out of Date)

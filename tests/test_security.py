@@ -25,6 +25,16 @@ def test_security_headers_present(client):
     assert headers["X-Content-Type-Options"] == "nosniff"
     assert headers["X-Frame-Options"] == "DENY"
     assert headers["Referrer-Policy"] == "same-origin"
+    # SEC-04: site isolation and no copies of pages with personal data
+    assert headers["Cross-Origin-Opener-Policy"] == headers["Cross-Origin-Resource-Policy"] == "same-origin"
+    assert headers["Cross-Origin-Embedder-Policy"] == "require-corp"
+    assert headers["Cache-Control"] == "no-store"
+
+
+def test_static_files_stay_cacheable(client):
+    response = client.get("/static/css/app.css")
+    assert response.status_code == 200 and "no-store" not in response.headers.get("Cache-Control", "")
+    response.close()
 
 
 def test_post_without_csrf_token_is_rejected(app_with_post):

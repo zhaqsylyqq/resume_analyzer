@@ -113,6 +113,7 @@ app/
     openai_compat.py   OpenAICompatBackend + deepseek_backend() (JSON mode, thinking off)
     schemas.py         pydantic schemas = Gemini response schemas
     anonymize.py       demographics-free view for scoring
+    injection.py       SEC-04: prompt-injection signals in resumes, prompt echo in answers
     jobs.py            shared worker pool, round-robin between sessions, ETA (Q1)
     storage.py         SQLite schema and queries
     scoring.py         ranking, Top-N with ties, CSV
@@ -123,7 +124,11 @@ app/
   prompts/             *.txt prompt templates (string.Template, $placeholders)
   templates/ static/   Jinja2 templates, CSS, vanilla JS
 docs/specs/            one spec per feature
-scripts/               smoke_test.py, make_samples.py, backup_db.py
+docs/security/         threat-model.md (SEC-04): threats, protections, DAST findings
+samples/adversarial/   SEC-04: 10 hostile resumes (prompt injection, markup) for the tests
+ci/                    dast_seed.py, dast_login.py, dast_summary.py for the ZAP scan (dast.yml)
+.zap/rules.tsv         ZAP baseline rule levels (FAIL = regression of an existing protection)
+scripts/               smoke_test.py (--adversarial: SEC-04 release check), make_samples.py, backup_db.py
 tests/                 pytest suite; tests/fakes.py holds the fake Gemini client
 ```
 

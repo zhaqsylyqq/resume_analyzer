@@ -1,0 +1,126 @@
+name: DAST
+
+# SEC-04: OWASP ZAP baseline scan (spider + passive rules: it reads answers, it does not attack)
+# of a throw-away copy of the site started inside this job: production settings, an empty
+# SQLite database filled by ci/dast_seed.py, keys generated for this run only, no AI key.
+# Nothing outside the runner is touched. When a staging environment exists (CD-02), the
+# target becomes staging after each deploy.
+#
+# Report-only for now, like security.yml: findings are published in the job summary and as an
+# artifact but do not fail the build. Rules marked FAIL in .zap/rules.tsv are regressions of
+# protections the app already has; set REPORT_ONLY to "false" with security.yml (2026-12-01).
+
+on:
+  schedule:
+    - cron: "41 3 * * 2"  # Tuesdays 03:41 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "app/**"
+      - "ci/dast_*.py"
+      - ".zap/**"
+      - ".github/workflows/dast.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dast-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REPORT_ONLY: "true"
+  # ZAP 2.17.0 ("stable" on 2026-11-03), pinned by digest; update by hand with the digest of a new release.
+  ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:stable@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af
+  TARGET: http://127.0.0.1:8000
+
+jobs:
+  zap:
+    name: OWASP ZAP baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      APP_ENV: production
+      LLM_PROVIDER: deepseek
+      DEEPSEEK_API_KEY: dast-not-a-real-key        # nothing is analysed during the scan
+      DEEPSEEK_BASE_URL: https://deepseek.invalid  # and the AI could not be reached anyway
+      DAST_USER: zap-recruiter
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install --require-hashes --no-deps -r requirements.lock
+
+      - name: Keys and password for this run only
+        run: |
+          data_dir="$RUNNER_TEMP/hrscreen-dast"
+          mkdir -p "$data_dir"
+          secret_key=$(python -c 'import secrets; print(secrets.token_urlsafe(48))')
+          data_key=$(python -m app.data_key generate)
+          password=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')
+          echo "::add-mask::$secret_key"
+          echo "::add-mask::$data_key"
+          echo "::add-mask::$password"
+          {
+            echo "DATA_DIR=$data_dir"
+            echo "FLASK_SECRET_KEY=$secret_key"
+            echo "DATA_KEY=$data_key"
+            echo "DAST_PASSWORD=$password"
+          } >> "$GITHUB_ENV"
+
+      - name: Fill the copy and start it (waitress, as in the image)
+        run: |
+          python ci/dast_seed.py
+          nohup waitress-serve --host=127.0.0.1 --port=8000 --threads=8 --call app:create_server_app \
+            > "$RUNNER_TEMP/server.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS "$TARGET/healthz"; then echo; break; fi
+            sleep 1
+          done
+          curl -fsS "$TARGET/readyz"
+
+      - name: Sign in as the recruiter (the scanner sends this cookie with every request)
+        run: |
+          cookie=$(python ci/dast_login.py "$TARGET")
+          echo "::add-mask::${cookie#session=}"
+          echo "SESSION_COOKIE=$cookie" >> "$GITHUB_ENV"
+
+      - name: ZAP baseline scan
+        id: zap
+        continue-on-error: ${{ env.REPORT_ONLY == 'true' }}
+        run: |
+          mkdir -p zap-wrk && chmod 777 zap-wrk && cp .zap/rules.tsv zap-wrk/
+          # Forms are not submitted (no POST at all): the scan reads pages, it changes nothing.
+          options="-config spider.postform=false -config spider.processform=false"
+          options="$options -config replacer.full_list(0).description=session"
+          options="$options -config replacer.full_list(0).enabled=true"
+          options="$options -config replacer.full_list(0).matchtype=REQ_HEADER"
+          options="$options -config replacer.full_list(0).matchstr=Cookie"
+          options="$options -config replacer.full_list(0).regex=false"
+          options="$options -config replacer.full_list(0).replacement=$SESSION_COOKIE"
+          docker run --rm --network host -v "$PWD/zap-wrk:/zap/wrk/:rw" "$ZAP_IMAGE" \
+            zap-baseline.py -t "$TARGET/" -c rules.tsv -m 3 -T 10 -I \
+            -r zap-report.html -J zap-report.json -w zap-report.md -z "$options"
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f zap-wrk/zap-report.json ]; then
+            python ci/dast_summary.py zap-wrk/zap-report.json .zap/rules.tsv >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ZAP produced no report; see the scan step log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "Server errors during the scan: $(grep -c ' ERROR ' "$RUNNER_TEMP/server.log" || true)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: zap-report
+          path: |
+            zap-wrk/zap-report.*
+          retention-days: 30

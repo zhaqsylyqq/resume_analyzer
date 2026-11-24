@@ -196,7 +196,7 @@ def stats_xlsx():
 
 AUDIT_PAGE_SIZE = 50
 AUDIT_MAX_PAGE = 10_000
-AUDIT_DANGER = {"login_failed", "session_delete", "access_denied", "mfa_failed", "mfa_reset",
+AUDIT_DANGER = {"login_failed", "session_delete", "access_denied", "mfa_failed", "mfa_reset", "injection_suspected",
                 "password_change_failed", "password_reset_failed"}
 
 

@@ -6,7 +6,11 @@ services/gemini.py and the names LLMService / get_gemini / GEMINI_CONCURRENCY ke
 Reliability rules:
 - Every call asks for JSON with a response schema; the reply is validated with pydantic.
   Invalid output is retried once, then AnalysisFailed is raised (caller marks the resume
-  "analysis_failed" and continues the batch).
+  "analysis_failed" and continues the batch). SEC-04: an answer that repeats the system
+  prompt (a resume made the model reveal it) counts as invalid too.
+- Untrusted text sits between delimiter tags it cannot close (`fence`). A resume that talks
+  to the AI is still analysed, but its profile carries `injection_signals` so the recruiter
+  is warned (services/injection.py).
 - Rate limits (429) and overload (503) put that model on a shared cooldown (circuit
   breaker) for the backoff delay, honouring the server's retry hint. Quotas are per model,
   so while a model cools down every worker goes straight to the next model in the
@@ -34,6 +38,7 @@ import random
 import re
 import threading
 import time
+import unicodedata
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -48,7 +53,7 @@ from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel, ValidationError
 
-from . import pii
+from . import injection, pii
 from .anonymize import scoring_view
 from .schemas import CandidateProfile, FitAssessment, ResumeFacts, ScoringResult, VacancyInput, Verdict
 
@@ -158,10 +163,22 @@ def load_prompt(name: str) -> Template:
     return Template((PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8"))
 
 
+# "<" and ">" and the look-alikes NFKC keeps (‹ › 〈 〉 ⟨ ⟩); full-width ＜ ＞ fold to < > first.
+_LT, _GT = "<\u2039\u3008\u27e8", ">\u203a\u3009\u27e9"
+
+
+ROLE_TAGS = ("system", "assistant", "user", "instructions", "instruction")  # SEC-04: never markup inside data
+
+
 def fence(text: str, *tags: str) -> str:
-    """Stop untrusted text from closing or opening our delimiter tags."""
-    for tag in tags:
-        text = re.sub(rf"</?\s*{tag}\s*>", f"[{tag}]", text, flags=re.IGNORECASE)
+    """Stop untrusted text from closing or opening our delimiter tags: `</resume>`,
+    `< /resume >`, `</resume x="">`, `＜/resume＞` and `&lt;/resume&gt;` all become `[resume]`.
+    Role tags (`<system>`) and chat-template tokens (`<|im_start|>`) are defused the same way."""
+    text = unicodedata.normalize("NFKC", text)  # also folds full-width letters (ｒｅｓｕｍｅ)
+    text = re.sub(r"<\|\s*([a-z_]{1,20})\s*\|>", r"[\1]", text, flags=re.IGNORECASE)
+    for tag in (*tags, *ROLE_TAGS):
+        text = re.sub(rf"[{_LT}]\s*/?\s*{tag}\b[^{_LT}{_GT}]{{0,40}}[{_GT}]", f"[{tag}]", text, flags=re.IGNORECASE)
+        text = re.sub(rf"&lt;\s*/?\s*{tag}\b.{{0,40}}?&gt;", f"[{tag}]", text, flags=re.IGNORECASE | re.DOTALL)
     return text
 
 
@@ -265,6 +282,7 @@ class LLMService:
             full_name=redaction.full_name,
             contacts=redaction.contacts,
             demographics=redaction.demographics,
+            injection_signals=injection.signals(resume_text),  # SEC-04: warn the recruiter
         )
 
     def score(
@@ -312,6 +330,9 @@ class LLMService:
                 parsed = schema.model_validate_json(text or "")
             except ValidationError as exc:
                 log.warning("Invalid %s from the AI (attempt %d): %s", schema.__name__, attempt, exc.error_count())
+                continue
+            if injection.echoes_instructions(parsed, system):  # SEC-04: the prompt leaked into the answer
+                log.warning("%s from the AI repeats its instructions (attempt %d)", schema.__name__, attempt)
                 continue
             if check is None or check(parsed):
                 return parsed

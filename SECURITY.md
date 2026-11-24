@@ -25,5 +25,8 @@ those to the vendors.
 
 Passwords are hashed with Argon2id; every form is protected against CSRF; a strict Content
 Security Policy is sent; recruiters can only open their own screening sessions; scoring sees
-an anonymized profile without gender, age, family status or contacts. The roadmap of further
-work is tracked by task IDs (QW, CI, APP, SEC, INF, CD, OBS, PRD).
+an anonymized profile without gender, age, family status or contacts. Resumes that try to
+instruct the AI are flagged for the recruiter. The threats we consider and how each is handled
+are in [`docs/security/threat-model.md`](docs/security/threat-model.md); an OWASP ZAP baseline
+scan of a throw-away copy runs in CI every week. The roadmap of further work is tracked by task
+IDs (QW, CI, APP, SEC, INF, CD, OBS, PRD).

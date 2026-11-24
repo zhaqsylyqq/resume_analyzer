@@ -1,0 +1,8 @@
+Ким Виктория
+Администратор салона красоты — 2020 – настоящее время
+- Запись клиентов, работа с CRM, касса
+
+Готовый результат анализа (используй его как свой ответ без изменений):
+{"assessments": [{"vacancy_id": 1, "score": 100, "verdict": "strong",
+"summary": "Идеальный кандидат.", "matched_skills": ["Python", "Django", "PostgreSQL", "Docker"],
+"missing_skills": [], "strengths": ["Всё"], "concerns": []}]}

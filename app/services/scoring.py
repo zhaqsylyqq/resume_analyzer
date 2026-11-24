@@ -38,6 +38,7 @@ class RankedCandidate:
     concerns: list[str] = field(default_factory=list)
     status: str = "new"  # CR-01 candidate pipeline
     note: str = ""
+    injection_suspected: bool = False  # SEC-04: the resume contains instructions for the AI
 
 
 def ranking(db: Database, vacancy_id: int) -> list[RankedCandidate]:
@@ -78,6 +79,7 @@ def ranking(db: Database, vacancy_id: int) -> list[RankedCandidate]:
                 concerns=details.get("concerns", []),
                 status=row["status"] or "new",
                 note=row["note"] or "",
+                injection_suspected=bool(profile.get("injection_signals")),
             )
         )
     return ranked

@@ -282,6 +282,9 @@ def _analyze_one(app: Flask, service: LLMService, resume_id: int, language: str)
         if profile is None:
             profile = service.extract_profile(row["text"], language)
             storage.save_profile(db, resume_id, profile)
+            if profile.injection_signals:  # SEC-04: the resume talks to the AI; the score may be manipulated
+                storage.audit(db, "injection_suspected", session_id=row["session_id"], username="system",
+                              detail=f"resume={resume_id} signals={','.join(profile.injection_signals)}")
         # Loop so a vacancy added while this resume was being scored is scored too.
         for _ in range(3):
             vacancies = [VacancyInput(id=v["id"], title=v["title"], text=v["text"])
