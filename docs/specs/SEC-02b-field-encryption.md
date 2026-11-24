@@ -77,6 +77,12 @@ never replaces one, never prints the key), `status` (where the key comes from an
 two people (like `BACKUP_KEY`), never onto the backup drive: a backup holds only ciphertext and
 needs both keys to be read. Docker compose: `DATA_KEY` in `.env` (app and worker share it).
 
+## What actually happened on the laptop
+
+The live database was switched by accident on 2026-11-24 at 20:20: see
+`docs/specs/OPS-readonly-commands.md` (key `69c71642` in `instance\.data_key`). Steps 2–3 below
+are therefore done; steps 1, 4 and 5 (copies, password manager, old dumps) remain.
+
 ## Switching the laptop (with the owner)
 
 1. Insert the USB drive; `flask --app app backup-offsite` and `restore-check` (a copy before the change).

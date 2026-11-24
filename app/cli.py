@@ -134,8 +134,10 @@ def db_check_command() -> None:
         if postgres:
             from .services import migrations
 
-            revision = migrations.current(target)
+            revision, expected = migrations.current(target), migrations.head()
             label = f"PostgreSQL {dbapi.redact_url(target)}, schema {revision or 'not migrated'}"
+            if revision != expected:  # read-only start: nothing was migrated to hide this
+                label += f" (this code expects {expected}: start the site or run db-upgrade with matching code)"
         else:
             result = db.execute("PRAGMA integrity_check").fetchone()[0]
             if result != "ok":

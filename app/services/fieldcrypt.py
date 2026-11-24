@@ -84,7 +84,7 @@ class Keyring:
 _keyring: Keyring | None = None
 
 
-def configure(keyring: Keyring) -> None:
+def configure(keyring: Keyring | None) -> None:
     global _keyring
     _keyring = keyring
 

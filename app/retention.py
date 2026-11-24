@@ -79,7 +79,8 @@ def purge_old(days: int | None) -> None:
     click.echo(f"Deleted {len(deleted)} session(s) not changed for {days} days.")
 
 
-def init_retention(app: Flask) -> None:
-    _run(app)
+def init_retention(app: Flask, run_now: bool = True) -> None:
+    if run_now:
+        _run(app)
     app.before_request(_maybe_run)
     app.cli.add_command(purge_old)

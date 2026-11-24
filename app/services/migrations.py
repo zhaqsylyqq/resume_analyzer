@@ -50,6 +50,15 @@ def upgrade(url: str, revision: str = "head") -> None:
         engine.dispose()
 
 
+def head() -> str:
+    """The newest revision this code knows."""
+    from alembic.script import ScriptDirectory
+
+    cfg = Config()
+    cfg.set_main_option("script_location", SCRIPT_LOCATION)
+    return str(ScriptDirectory.from_config(cfg).get_current_head())
+
+
 def current(url: str) -> str | None:
     engine = create_engine(sqlalchemy_url(url))
     try:

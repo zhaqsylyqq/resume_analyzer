@@ -357,14 +357,18 @@ def load_secret_key(instance_path: str, production: bool = False) -> str:
 
 
 
-def load_data_keyring(config: Mapping[str, Any], instance_path: str, production: bool = False):
+def load_data_keyring(config: Mapping[str, Any], instance_path: str, production: bool = False,
+                      read_only: bool = False):
     """SEC-02b: the keys of the personal-data columns. DATA_KEY(_FILE) first, then the key
     kept in <data>/.data_key. Outside production that file is created on first start; in
     production a missing key is an error (`python -m app.data_key init` creates it once),
     so replicas and restarts never invent a second key."""
     from .services.fieldcrypt import KEY_FILE, Keyring, load_key_file
 
-    current = (config.get("DATA_KEY") or "").strip() or load_key_file(instance_path, create=not production)
+    current = (config.get("DATA_KEY") or "").strip() or load_key_file(
+        instance_path, create=not production and not read_only)
+    if not current and read_only:
+        return None  # backups and checks never create a key; they do not decrypt anything
     if not current:
         raise ConfigError([f"DATA_KEY (or DATA_KEY_FILE, or {KEY_FILE} in the data folder) is required in production: "
                            "create it once with `python -m app.data_key init` and keep a copy in the password manager"])

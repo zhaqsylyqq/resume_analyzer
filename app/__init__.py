@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from typing import Any
 
 from dotenv import load_dotenv
@@ -17,9 +18,39 @@ from .retention import init_retention
 from .security import init_security
 from .services import fieldcrypt, storage
 
+# Commands that only read the database. Started for them, the app changes nothing: no schema
+# migration, no encryption pass, no retention purge, no new key file. Incident 2026-11-24: the
+# scheduled `backup-auto` ran newer code that was on the disk for a few minutes and migrated
+# and encrypted the live database.
+READ_ONLY_COMMANDS = frozenset({"backup", "backup-offsite", "backup-auto", "restore-check", "db-check"})
+_FLASK_OPTIONS_WITH_VALUE = {"-A", "--app", "-e", "--env-file"}
 
-def create_app(overrides: dict[str, Any] | None = None) -> Flask:
-    """Build the app. Raises ConfigError (listing every bad setting) before anything starts."""
+
+def cli_command(argv: list[str] | None = None) -> str | None:
+    """The `flask` sub-command this process runs (`flask --app app backup-auto`,
+    `python -m flask --app app backup-auto`) or None (web server, tests, scripts)."""
+    argv = sys.argv if argv is None else argv
+    if not argv:
+        return None
+    parts = argv[0].replace("\\", "/").lower().split("/")  # Windows and POSIX paths alike
+    if parts[-1] not in ("flask", "flask.exe") and parts[-2:] != ["flask", "__main__.py"]:
+        return None
+    args = iter(argv[1:])
+    for arg in args:
+        if arg in _FLASK_OPTIONS_WITH_VALUE:
+            next(args, None)
+        elif not arg.startswith("-"):
+            return arg
+    return None
+
+
+def create_app(overrides: dict[str, Any] | None = None, read_only: bool | None = None) -> Flask:
+    """Build the app. Raises ConfigError (listing every bad setting) before anything starts.
+
+    read_only (default: the process runs one of READ_ONLY_COMMANDS): leave the database and the
+    data folder exactly as they are."""
+    if read_only is None:
+        read_only = cli_command() in READ_ONLY_COMMANDS
     load_dotenv()
     settings = load_settings()
     app = Flask(__name__, instance_relative_config=True,
@@ -36,8 +67,10 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
     if not app.config.get("SECRET_KEY"):
         app.config["SECRET_KEY"] = load_secret_key(app.instance_path, production=settings.is_production)
     # SEC-02b: personal data in the database is encrypted with this key (before any storage call)
-    fieldcrypt.configure(load_data_keyring(app.config, app.instance_path, production=settings.is_production))
+    fieldcrypt.configure(load_data_keyring(app.config, app.instance_path, production=settings.is_production,
+                                           read_only=read_only))
     app.extensions["settings"] = settings
+    app.config["READ_ONLY_START"] = read_only
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)  # our Gemini service logs retries itself
@@ -46,9 +79,10 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
 
     init_security(app)
     init_i18n(app)
-    storage.init_db(app)
+    if not read_only:
+        storage.init_db(app)  # migrations, requeue, encryption pass (SEC-02b)
     init_auth(app)
-    init_retention(app)
+    init_retention(app, run_now=not read_only)
     _register_blueprints(app)
     _register_error_handlers(app)
     init_cli(app)

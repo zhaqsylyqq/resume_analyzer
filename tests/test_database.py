@@ -50,7 +50,7 @@ def test_create_app_uses_database_url(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("DATABASE_URL", "postgresql://hr:x@127.0.0.1:1/none")
     monkeypatch.setattr(storage, "init_db", lambda app: None)  # no server needed for this check
-    monkeypatch.setattr("app.init_retention", lambda app: None)
+    monkeypatch.setattr("app.init_retention", lambda app, run_now=True: None)
     assert create_app({"TESTING": True}).config["DATABASE"] == "postgresql://hr:x@127.0.0.1:1/none"
 
 
