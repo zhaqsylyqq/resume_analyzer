@@ -8,6 +8,7 @@ from flask import Blueprint, abort, current_app, g, jsonify, redirect, render_te
 
 from ..auth import can_access, owner_filter
 from ..i18n import get_locale, translate
+from ..ratelimits import rate_limited
 from ..services import bias, jobs, storage
 
 bp = Blueprint("sessions", __name__, url_prefix="/sessions")
@@ -67,6 +68,7 @@ def new():
 
 
 @bp.post("")
+@rate_limited("work", 20, 60)
 def create():
     title = request.form.get("title", "").strip()
     language = request.form.get("language", get_locale())

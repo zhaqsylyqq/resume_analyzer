@@ -8,57 +8,24 @@ are removed.
     python scripts/backup_db.py --out D:\\backups --keep 30
 
 Exit code 0 on success, 1 on any error (missing database, failed check).
+Same as `flask --app app backup` (APP-09); kept for existing scheduled tasks.
 """
 from __future__ import annotations
 
 import argparse
-import re
+import os
 import sqlite3
 import sys
-from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_DB = ROOT / "instance" / "app.db"
-DEFAULT_OUT = ROOT / "instance" / "backups"
-PREFIX = "app-"
+sys.path.insert(0, str(ROOT))
+from app.services.backup import PREFIX, backup  # noqa: E402,F401  (logic lives in the app package, APP-09)
 
-
-def _age_key(path: Path) -> tuple[str, int]:
-    """Oldest first: by time stamp, then by the -2, -3 suffix of same-second backups."""
-    match = re.fullmatch(rf"{PREFIX}(\d{{8}}-\d{{6}})(?:-(\d+))?", path.stem)
-    return (match.group(1), int(match.group(2) or 1)) if match else ("", 0)
-
-
-def backup(db_path: Path, out_dir: Path, keep: int = 14, now: datetime | None = None) -> Path:
-    if not db_path.is_file():
-        raise FileNotFoundError(f"database not found: {db_path}")
-    out_dir.mkdir(mode=0o750, parents=True, exist_ok=True)  # backups hold personal data
-    stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
-    target = out_dir / f"{PREFIX}{stamp}.db"
-    n = 2
-    while target.exists():  # two backups in the same second
-        target = out_dir / f"{PREFIX}{stamp}-{n}.db"
-        n += 1
-
-    source = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    dest = sqlite3.connect(target)
-    try:
-        with dest:
-            source.backup(dest)
-        result = dest.execute("PRAGMA integrity_check").fetchone()[0]
-    finally:
-        dest.close()
-        source.close()
-    if result != "ok":
-        target.unlink(missing_ok=True)
-        raise RuntimeError(f"integrity check failed: {result}")
-
-    if keep > 0:
-        backups = sorted(out_dir.glob(f"{PREFIX}*.db"), key=_age_key)
-        for old in backups[:-keep]:
-            old.unlink(missing_ok=True)
-    return target
+# APP-01: DATA_DIR moves the database out of instance/
+DATA = Path(os.environ["DATA_DIR"]) if os.environ.get("DATA_DIR") else ROOT / "instance"
+DEFAULT_DB = DATA / "app.db"
+DEFAULT_OUT = DATA / "backups"
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -10,7 +10,8 @@ from flask import Flask, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException
 
 from .auth import init_auth
-from .config import load_secret_key, settings_from_env
+from .cli import init_cli
+from .config import load_secret_key, load_settings
 from .i18n import init_i18n, translate
 from .retention import init_retention
 from .security import init_security
@@ -18,20 +19,28 @@ from .services import storage
 
 
 def create_app(overrides: dict[str, Any] | None = None) -> Flask:
+    """Build the app. Raises ConfigError (listing every bad setting) before anything starts."""
     load_dotenv()
-    app = Flask(__name__, instance_relative_config=True)
+    settings = load_settings()
+    app = Flask(__name__, instance_relative_config=True,
+                instance_path=os.path.abspath(settings.data_dir) if settings.data_dir else None)
     os.makedirs(app.instance_path, exist_ok=True)
 
-    app.config.from_mapping(settings_from_env())
-    app.config["DATABASE"] = os.path.join(app.instance_path, "app.db")
+    app.config.from_mapping(settings.to_flask())
+    # APP-02: PostgreSQL when DATABASE_URL is set, otherwise the SQLite file in the data folder
+    app.config["DATABASE"] = settings.database_url or os.path.join(app.instance_path, "app.db")
+    if settings.flask_secret_key:
+        app.config["SECRET_KEY"] = settings.flask_secret_key
     if overrides:
         app.config.update(overrides)
     if not app.config.get("SECRET_KEY"):
-        app.config["SECRET_KEY"] = load_secret_key(app.instance_path)
+        app.config["SECRET_KEY"] = load_secret_key(app.instance_path, production=settings.is_production)
+    app.extensions["settings"] = settings
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)  # our Gemini service logs retries itself
-    logging.getLogger("fontTools").setLevel(logging.WARNING)  # PDF export font subsetting is noisy
+    logging.getLogger("fontTools").setLevel(logging.WARNING)
+    logging.getLogger("alembic").setLevel(logging.WARNING)  # APP-02: migrations log only problems  # PDF export font subsetting is noisy
 
     init_security(app)
     init_i18n(app)
@@ -40,6 +49,10 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
     init_retention(app)
     _register_blueprints(app)
     _register_error_handlers(app)
+    init_cli(app)
+    from .worker import init_worker
+
+    init_worker(app)
     return app
 
 
@@ -53,7 +66,41 @@ def create_server_app() -> Flask:
 
     app = create_app()
     jobs.resume_pending(app)
+    install_shutdown_handlers(app)
     return app
+
+
+def install_shutdown_handlers(app: Flask) -> list[int]:
+    """APP-08: on SIGTERM (docker stop, Kubernetes) or Ctrl+C, finish the resumes being analyzed
+    (up to SHUTDOWN_TIMEOUT seconds), then stop. /readyz answers 503 from the first moment.
+
+    Returns the signals handled. Signal handlers can only be set from the main thread; waitress
+    calls the app factory there, other callers (tests, `flask run` reloader) are left alone.
+    """
+    import signal
+    import threading
+
+    from .services import jobs
+
+    if threading.current_thread() is not threading.main_thread():
+        return []
+    timeout = app.config["SHUTDOWN_TIMEOUT"]
+    log = logging.getLogger("app.shutdown")
+
+    def handle(signum: int, _frame: Any) -> None:
+        log.info("Received %s: finishing analysis in progress (up to %ss) before stopping",
+                 signal.Signals(signum).name, timeout)
+        jobs.drain(timeout)
+        log.info("Stopped cleanly")
+        raise SystemExit(0) if signum == signal.SIGTERM else KeyboardInterrupt
+
+    handled = []
+    for name in ("SIGTERM", "SIGINT", "SIGBREAK"):  # SIGBREAK: Ctrl+Break on Windows
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            signal.signal(sig, handle)
+            handled.append(int(sig))
+    return handled
 
 
 def _register_blueprints(app: Flask) -> None:
@@ -74,14 +121,17 @@ def _wants_json() -> bool:
 
 
 def _register_error_handlers(app: Flask) -> None:
-    known = (400, 403, 404, 413)
+    known = (400, 403, 404, 413, 429)
 
     @app.errorhandler(HTTPException)
     def handle_http(exc: HTTPException):
         code = exc.code or 500
+        # keep the exception's own headers (Retry-After on 429, Allow on 405)
+        headers = [(k, v) for k, v in exc.get_headers() if k.lower() != "content-type"]
         if _wants_json():
-            return jsonify(error=exc.name, code=code, message=translate(f"error.{code if code in known else 500}")), code
-        return render_template("error.html", code=code), code
+            body = jsonify(error=exc.name, code=code, message=translate(f"error.{code if code in known else 500}"))
+            return body, code, headers
+        return render_template("error.html", code=code), code, headers
 
     @app.errorhandler(Exception)
     def handle_unexpected(exc: Exception):

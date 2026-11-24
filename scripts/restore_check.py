@@ -9,6 +9,7 @@ PRAGMA integrity_check and prints how many users, sessions and resumes it holds.
     python scripts/restore_check.py --restore-to instance\\app.db   # with the app stopped
 
 Exit code 0 when the copy is readable and intact, 1 otherwise.
+Same as `flask --app app restore-check` (APP-09); kept for the scheduled task.
 """
 from __future__ import annotations
 
@@ -16,33 +17,12 @@ import argparse
 import os
 import sqlite3
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import backup_offsite  # noqa: E402  (same folder)
 
-TABLES = ("users", "sessions", "vacancies", "resumes", "scores", "audit_log")
-
-
-def check(blob_path: Path, key: bytes, restore_to: Path | None = None) -> dict[str, int]:
-    data = backup_offsite.decrypt(blob_path.read_bytes(), key)
-    with tempfile.TemporaryDirectory(prefix="hrscreen-restore-") as tmp:
-        plain = Path(tmp) / "app.db"
-        plain.write_bytes(data)
-        db = sqlite3.connect(plain)
-        try:
-            result = db.execute("PRAGMA integrity_check").fetchone()[0]
-            if result != "ok":
-                raise backup_offsite.BackupError(f"integrity check failed: {result}")
-            counts = {t: db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in TABLES}  # noqa: S608 - fixed names
-        finally:
-            db.close()
-    if restore_to is not None:
-        if restore_to.exists():
-            raise backup_offsite.BackupError(f"refusing to overwrite {restore_to}; move it away first")
-        restore_to.write_bytes(data)
-    return counts
+from app.services.backup import TABLES, check  # noqa: E402,F401  (logic lives in the app package, APP-09)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -8,9 +8,10 @@ from flask import Blueprint, current_app, g, jsonify, request
 
 from ..auth import current_settings, is_admin
 from ..i18n import translate
+from ..ratelimits import rate_limited
 from ..services import jobs, storage
 from ..services.gemini import GeminiError
-from ..services.parsing import parse_file
+from ..services.parsing import parse_file, precheck
 from .sessions import load_session_or_404
 
 bp = Blueprint("screening", __name__, url_prefix="/sessions")
@@ -41,6 +42,7 @@ def remaining_label(remaining: int | None) -> str | None:
 
 
 @bp.post("/<int:session_id>/resumes")
+@rate_limited("work", 20, 60)
 def upload(session_id: int):
     load_session_or_404(session_id)
     cfg = current_app.config
@@ -56,9 +58,14 @@ def upload(session_id: int):
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     remaining = remaining_today()
+    deferred = jobs.external()  # APP-05: workers extract the text; here only the cheap checks
     for upload_file in files:
         data = upload_file.stream.read(cfg["MAX_FILE_BYTES"] + 1)
-        parsed = parse_file(upload_file.filename, data, max_bytes=cfg["MAX_FILE_BYTES"], max_chars=cfg["MAX_RESUME_CHARS"])
+        if deferred:
+            parsed = precheck(upload_file.filename, data, max_bytes=cfg["MAX_FILE_BYTES"])
+        else:
+            parsed = parse_file(upload_file.filename, data, max_bytes=cfg["MAX_FILE_BYTES"],
+                                max_chars=cfg["MAX_RESUME_CHARS"])
         if storage.resume_exists(db, session_id, parsed.sha256):
             rejected.append({"filename": parsed.filename, "error": "duplicate", "message": translate("parse_error.duplicate")})
             continue
@@ -69,7 +76,8 @@ def upload(session_id: int):
                 continue
             remaining -= 1
         status = storage.PENDING if parsed.ok else storage.PARSE_FAILED
-        resume_id = storage.add_resume(db, session_id, parsed.filename, parsed.sha256, parsed.text, status, parsed.error)
+        resume_id = storage.add_resume(db, session_id, parsed.filename, parsed.sha256, parsed.text, status, parsed.error,
+                                       raw_file=data if deferred and parsed.ok else None)
         if resume_id is None:  # same file twice in one batch
             rejected.append({"filename": parsed.filename, "error": "duplicate", "message": translate("parse_error.duplicate")})
         elif parsed.ok:
@@ -84,6 +92,7 @@ def upload(session_id: int):
 
 
 @bp.post("/<int:session_id>/analyze")
+@rate_limited("work", 20, 60)
 def analyze(session_id: int):
     """Re-queue failed resumes and resumes missing a score, then run the job."""
     load_session_or_404(session_id)

@@ -12,11 +12,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import ipaddress
+import json
 import re
-import threading
+import secrets
 import time
-from collections import defaultdict, deque
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from typing import Any, Callable
 
@@ -42,9 +42,10 @@ from flask.cli import with_appcontext
 
 from . import settings as app_settings
 from .i18n import translate
+from .ratelimits import rate_limited
 from .security import is_safe_redirect, is_trusted_proxy
+from .services import ratelimit, storage
 from .services import stats as usage_stats
-from .services import storage
 from .starter import create_starter_session
 
 bp = Blueprint("auth", __name__)
@@ -53,7 +54,12 @@ ROLES = ("recruiter", "admin")
 USERNAME_RE = re.compile(r"^[\w.\-]{3,64}$", re.UNICODE)
 MIN_PASSWORD = 10
 SESSION_LIFETIME = timedelta(hours=12)
-PUBLIC_ENDPOINTS = frozenset({"auth.login", "auth.register", "core.health", "core.set_language", "static"})
+PUBLIC_ENDPOINTS = frozenset({"auth.login", "auth.login_verify", "auth.register", "auth.reset_password",
+                              "core.health", "core.ready", "core.set_language", "static"})
+# SEC-01: pages an admin without two-factor sign-in may still open when ADMIN_MFA_REQUIRED is on
+MFA_SETUP_ENDPOINTS = frozenset({"account.index", "account.start_2fa", "account.confirm_2fa", "auth.logout"})
+MFA_PENDING_SECONDS = 300  # time to type the code after the password
+RESET_LINK_LIFETIME = timedelta(hours=1)
 
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
 MAX_EMAIL = 254
@@ -83,8 +89,14 @@ def verify_password(password_hash: str, password: str) -> bool:
         return False
 
 
-def _fingerprint(password_hash: str) -> str:
-    return hashlib.sha256(password_hash.encode()).hexdigest()[:16]
+def _fingerprint(password_hash: str, totp_secret: str | None = None) -> str:
+    """Stored in the session: changing the password or switching two-factor sign-in on or off
+    signs out every other session of that user (SEC-01)."""
+    return hashlib.sha256(f"{password_hash}|{totp_secret or ''}".encode()).hexdigest()[:16]
+
+
+def fingerprint(user) -> str:
+    return _fingerprint(user["password_hash"], user["totp_secret"])
 
 
 def validate_username(username: str) -> str | None:
@@ -104,36 +116,21 @@ def validate_password(password: str) -> str | None:
 # Rate limiting of failed logins ---------------------------------------------------------------
 
 class LoginLimiter:
-    """Failures per key (username, IP) in a sliding window; in memory, one process per DB."""
+    """Failures per key (username, IP): MAX_FAILURES within FAILURE_WINDOW lock the key for
+    LOCKOUT. APP-06: counted in the database by default, so every process shares them."""
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
-        self.clock = clock
-        self._failures: dict[str, deque[float]] = defaultdict(deque)
-        self._locked_until: dict[str, float] = {}
-        self._lock = threading.Lock()
+    def __init__(self, clock: Callable[[], float] = time.time, store: ratelimit.Store | None = None) -> None:
+        self._limiter = ratelimit.Limiter(store or ratelimit.MemoryStore(), MAX_FAILURES, int(FAILURE_WINDOW),
+                                          lockout=int(LOCKOUT), clock=clock)
 
     def blocked(self, *keys: str) -> bool:
-        now = self.clock()
-        with self._lock:
-            return any(self._locked_until.get(k, 0) > now for k in keys)
+        return self._limiter.blocked(*keys)
 
     def fail(self, *keys: str) -> None:
-        now = self.clock()
-        with self._lock:
-            for key in keys:
-                window = self._failures[key]
-                window.append(now)
-                while window and window[0] < now - FAILURE_WINDOW:
-                    window.popleft()
-                if len(window) >= MAX_FAILURES:
-                    self._locked_until[key] = now + LOCKOUT
-                    window.clear()
+        self._limiter.hit(*keys)
 
     def reset(self, *keys: str) -> None:
-        with self._lock:
-            for key in keys:
-                self._failures.pop(key, None)
-                self._locked_until.pop(key, None)
+        self._limiter.reset(*keys)
 
 
 def _limiter() -> LoginLimiter:
@@ -143,25 +140,15 @@ def _limiter() -> LoginLimiter:
 class SignupLimiter:
     """S2: at most MAX_SIGNUPS_PER_IP successful sign-ups per IP per SIGNUP_WINDOW."""
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
-        self.clock = clock
-        self._events: dict[str, deque[float]] = defaultdict(deque)
-        self._lock = threading.Lock()
-
-    def _prune(self, ip: str, now: float) -> deque[float]:
-        events = self._events[ip]
-        while events and events[0] <= now - SIGNUP_WINDOW:
-            events.popleft()
-        return events
+    def __init__(self, clock: Callable[[], float] = time.time, store: ratelimit.Store | None = None) -> None:
+        self._limiter = ratelimit.Limiter(store or ratelimit.MemoryStore(), MAX_SIGNUPS_PER_IP, int(SIGNUP_WINDOW),
+                                          clock=clock)
 
     def blocked(self, ip: str) -> bool:
-        with self._lock:
-            return len(self._prune(ip, self.clock())) >= MAX_SIGNUPS_PER_IP
+        return self._limiter.blocked(f"signup:{ip}")
 
     def record(self, ip: str) -> None:
-        with self._lock:
-            now = self.clock()
-            self._prune(ip, now).append(now)
+        self._limiter.hit(f"signup:{ip}")
 
 
 def current_settings() -> app_settings.AppSettings:
@@ -192,7 +179,7 @@ def _load_user() -> None:
     if user_id is None:
         return
     user = storage.get_user(storage.get_db(), user_id)
-    if user is None or not user["active"] or session.get("pw") != _fingerprint(user["password_hash"]):
+    if user is None or not user["active"] or session.get("pw") != fingerprint(user):
         session.clear()
         return
     g.user = user
@@ -204,7 +191,9 @@ def _wants_json() -> bool:
 
 
 def _require_login():
-    if request.endpoint in PUBLIC_ENDPOINTS or g.get("user") is not None:
+    if g.get("user") is not None:
+        return _require_admin_mfa()
+    if request.endpoint in PUBLIC_ENDPOINTS:
         return None
     if request.endpoint is None:  # unknown URL: let the 404 handler answer
         return None
@@ -212,6 +201,19 @@ def _require_login():
         return jsonify(error="unauthorized", code=401, message=translate("auth.required")), 401
     target = request.full_path.rstrip("?") if request.method == "GET" else None
     return redirect(url_for("auth.login", next=target) if target and target != "/" else url_for("auth.login"))
+
+
+def _require_admin_mfa():
+    """SEC-01: with ADMIN_MFA_REQUIRED, an admin must switch on two-factor sign-in first."""
+    user = g.user
+    if (not current_app.config.get("ADMIN_MFA_REQUIRED") or user["role"] != "admin" or user["totp_secret"]
+            or request.endpoint in MFA_SETUP_ENDPOINTS or request.endpoint in PUBLIC_ENDPOINTS
+            or request.endpoint is None):
+        return None
+    if _wants_json():
+        return jsonify(error="mfa_required", code=403, message=translate("mfa.required")), 403
+    flash("mfa.required", "warning")
+    return redirect(url_for("account.index"))
 
 
 def admin_required(view):
@@ -226,15 +228,22 @@ def admin_required(view):
 
 def init_auth(app: Flask) -> None:
     app.config.setdefault("PERMANENT_SESSION_LIFETIME", SESSION_LIFETIME)
-    app.extensions["login_limiter"] = LoginLimiter()
-    app.extensions["signup_limiter"] = SignupLimiter()
+    store = ratelimit.store_for(app)
+    app.extensions["rate_store"] = store
+    app.extensions["login_limiter"] = LoginLimiter(store=store)
+    app.extensions["signup_limiter"] = SignupLimiter(store=store)
     # Runs after the CSRF check registered by init_security.
     app.before_request(_load_user)
     app.before_request(_require_login)
     app.jinja_env.globals["is_admin"] = is_admin
     app.jinja_env.globals["registration_open"] = registration_open
     app.register_blueprint(bp)
+    from .account import bp as account_bp
+
+    app.register_blueprint(account_bp)
     app.cli.add_command(create_admin)
+    app.cli.add_command(reset_2fa)
+    app.cli.add_command(reset_link_command)
 
 
 # Routes -------------------------------------------------------------------------------------
@@ -295,17 +304,90 @@ def login():
     if _hasher.check_needs_rehash(user["password_hash"]):
         storage.update_user(db, user["id"], password_hash=hash_password(password))
         user = storage.get_user(db, user["id"])
+    if user["totp_secret"]:
+        # SEC-01: the password was right; the session is not signed in until the code is.
+        session.clear()
+        session["mfa_user"] = user["id"]
+        session["mfa_at"] = time.time()
+        session["mfa_pw"] = fingerprint(user)
+        if target:
+            session["mfa_next"] = target
+        return redirect(url_for("auth.login_verify"))
     _sign_in(db, user)
     return redirect(target or url_for("core.index"))
 
 
-def _sign_in(db, user) -> None:
+def _pending_mfa_user():
+    user_id, started = session.get("mfa_user"), session.get("mfa_at", 0)
+    if user_id is None or time.time() - started > MFA_PENDING_SECONDS:
+        return None
+    user = storage.get_user(storage.get_db(), user_id)
+    if user is None or not user["active"] or not user["totp_secret"] or session.get("mfa_pw") != fingerprint(user):
+        return None
+    return user
+
+
+@bp.route("/login/verify", methods=["GET", "POST"])
+def login_verify():
+    """SEC-01: second step — a code from the authenticator app or a one-time recovery code."""
+    from .services import totp
+
+    if g.get("user") is not None:
+        return redirect(url_for("core.index"))
+    user = _pending_mfa_user()
+    if user is None:
+        session.clear()
+        flash("mfa.expired", "warning")
+        return redirect(url_for("auth.login"))
+    if request.method == "GET":
+        return render_template("auth/verify.html", error=None)
+
+    keys = (f"user:{user['username'].lower()}", f"ip:{_client_ip()}")
+    limiter = _limiter()
+    if limiter.blocked(*keys):
+        return render_template("auth/verify.html", error="auth.error.locked"), 429
+    db = storage.get_db()
+    code = request.form.get("code", "").strip()
+    method = None
+    step = totp.verify(user["totp_secret"], code, user["totp_last_step"])
+    if step is not None:
+        storage.update_user(db, user["id"], totp_last_step=step)
+        method = "2fa"
+    else:
+        remaining = totp.use_recovery_code(code, _recovery_hashes(user))
+        if remaining is not None:
+            storage.update_user(db, user["id"], recovery_codes=json.dumps(remaining))
+            method = "recovery code"
+    if method is None:
+        limiter.fail(*keys)
+        storage.audit(db, "login_failed", user, detail=f"{_client_ip()} wrong 2fa code")
+        status = 429 if limiter.blocked(*keys) else 401
+        return render_template("auth/verify.html", error="auth.error.locked" if status == 429 else "mfa.error.code"), status
+
+    limiter.reset(*keys)
+    target = session.get("mfa_next")
+    target = target if is_safe_redirect(target) else None
+    _sign_in(db, storage.get_user(db, user["id"]), method)
+    if method == "recovery code":
+        flash("mfa.recovery_used", "warning")
+    return redirect(target or url_for("core.index"))
+
+
+def _recovery_hashes(user) -> list[str]:
+    try:
+        value = json.loads(user["recovery_codes"] or "[]")
+    except ValueError:
+        return []
+    return [h for h in value if isinstance(h, str)]
+
+
+def _sign_in(db, user, method: str | None = None) -> None:
     storage.update_user(db, user["id"], last_login_at=storage.now())
-    storage.audit(db, "login", user, detail=_client_ip())
+    storage.audit(db, "login", user, detail=_client_ip() + (f" ({method})" if method else ""))
     session.clear()  # new session on login: no fixation; keeps nothing from the anonymous one
     session.permanent = True
     session["user_id"] = user["id"]
-    session["pw"] = _fingerprint(user["password_hash"])
+    session["pw"] = fingerprint(user)
 
 
 def registration_open() -> bool:
@@ -365,6 +447,53 @@ def register():
     _sign_in(db, user)
     flash("register.welcome", "success")
     return redirect(url_for("core.index"))
+
+
+# SEC-01: password reset by a one-time link -------------------------------------------------
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def create_reset_link(db, user, created_by=None) -> str:
+    """A one-time link valid for RESET_LINK_LIFETIME; only its hash is stored."""
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.now(timezone.utc) + RESET_LINK_LIFETIME).isoformat(timespec="seconds")
+    storage.create_password_reset(db, _token_hash(token), user["id"], created_by["id"] if created_by else None, expires)
+    return url_for("auth.reset_password", token=token, _external=True)
+
+
+@bp.route("/reset/<token>", methods=["GET", "POST"])
+@rate_limited("reset", 10, 900, by="ip", methods=("POST",))
+def reset_password(token: str):
+    """The user sets a new password. Two-factor sign-in stays on: a leaked link alone is not
+    enough to take over an account protected by it."""
+    db = storage.get_db()
+    token_hash = _token_hash(token)
+    limiter, ip_key = _limiter(), f"ip:{_client_ip()}"
+    if limiter.blocked(ip_key):
+        return render_template("auth/reset.html", valid=False, error="auth.error.locked"), 429
+    reset = storage.get_password_reset(db, token_hash)
+    if reset is None:
+        limiter.fail(ip_key)  # guessing tokens is pointless, but do not offer unlimited tries
+        return render_template("auth/reset.html", valid=False, error="reset.error.invalid"), 404
+    user = storage.get_user(db, reset["user_id"])
+    if user is None or not user["active"]:
+        return render_template("auth/reset.html", valid=False, error="reset.error.invalid"), 404
+    if request.method == "GET":
+        return render_template("auth/reset.html", valid=True, username=user["username"], error=None)
+    password = request.form.get("password", "")
+    error = validate_password(password)
+    if not error and password != request.form.get("password2", ""):
+        error = "register.error.mismatch"
+    if error:
+        return render_template("auth/reset.html", valid=True, username=user["username"], error=error), 400
+    if not storage.use_password_reset(db, token_hash, hash_password(password)):
+        return render_template("auth/reset.html", valid=False, error="reset.error.invalid"), 404
+    storage.audit(db, "password_reset", user, detail=_client_ip())
+    session.clear()
+    flash("reset.done", "success")
+    return redirect(url_for("auth.login"))
 
 
 @bp.post("/logout")
@@ -498,8 +627,21 @@ def update_user(user_id: int):
         new_hash = hash_password(password)
         storage.update_user(db, user_id, password_hash=new_hash)
         if is_self:  # keep the admin signed in after changing their own password
-            session["pw"] = _fingerprint(new_hash)
+            session["pw"] = _fingerprint(new_hash, user["totp_secret"])
         detail = f"{user['username']}: password changed"
+    elif action == "reset_link":
+        # SEC-01: a one-time link the admin passes to the user (there is no e-mail sending).
+        link = create_reset_link(db, user, g.user)
+        storage.audit(db, "user_update", g.user, detail=f"{user['username']}: password reset link created")
+        return render_template("admin/reset_link.html", target=user, link=link,
+                               minutes=int(RESET_LINK_LIFETIME.total_seconds() // 60))
+    elif action == "disable_2fa":
+        if not user["totp_secret"]:
+            return redirect(url_for("auth.users"))
+        storage.update_user(db, user_id, totp_secret=None, totp_last_step=None, recovery_codes=None)
+        if is_self:
+            session["pw"] = _fingerprint(user["password_hash"], None)
+        detail = f"{user['username']}: two-factor sign-in switched off by an admin"
     else:
         abort(400)
     storage.audit(db, "user_update", g.user, detail=detail)
@@ -566,3 +708,39 @@ def create_admin(username: str, password: str) -> None:
     finally:
         db.close()
     click.echo(f"Admin '{username}' created.")
+
+
+@click.command("reset-2fa")
+@with_appcontext
+@click.argument("username")
+def reset_2fa(username: str) -> None:
+    """Switch off two-factor sign-in for a user who lost the phone and the recovery codes."""
+    db = storage.connect(current_app.config["DATABASE"])
+    try:
+        user = storage.get_user_by_name(db, username.strip())
+        if user is None:
+            raise click.ClickException(f"User '{username}' not found.")
+        storage.update_user(db, user["id"], totp_secret=None, totp_last_step=None, recovery_codes=None)
+        storage.audit(db, "user_update", username="cli", detail=f"{user['username']}: two-factor sign-in switched off")
+    finally:
+        db.close()
+    click.echo(f"Two-factor sign-in switched off for '{user['username']}'. They should switch it on again.")
+
+
+@click.command("reset-link")
+@with_appcontext
+@click.argument("username")
+@click.option("--base-url", default="https://hrscreen.date", show_default=True, help="Address the user opens.")
+def reset_link_command(username: str, base_url: str) -> None:
+    """Print a one-time password reset link (valid 1 hour), e.g. for the only admin."""
+    db = storage.connect(current_app.config["DATABASE"])
+    try:
+        user = storage.get_user_by_name(db, username.strip())
+        if user is None:
+            raise click.ClickException(f"User '{username}' not found.")
+        with current_app.test_request_context(base_url=base_url):
+            link = create_reset_link(db, user)
+        storage.audit(db, "user_update", username="cli", detail=f"{user['username']}: password reset link created")
+    finally:
+        db.close()
+    click.echo(link)

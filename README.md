@@ -159,15 +159,36 @@ CI also runs lint, type and coverage checks. Run them locally before pushing:
 ruff check .            # lint (security rules included)
 mypy                    # types for app/ and scripts/
 pytest -q --cov         # tests; fails if coverage of app/ drops below 90 %
+TEST_DATABASE_URL=postgresql://postgres:pw@localhost:5432/hrscreen_test pytest -q   # same suite on PostgreSQL (wipes that database)
 pre-commit install      # optional: run ruff and mypy on every commit
 ```
 
 ## Configuration
 
-All settings come from environment variables (or `.env`, which is git-ignored).
+All settings come from environment variables (or `.env`, which is git-ignored). They are
+checked once at start-up: a wrong value (text where a number is expected, an unknown provider,
+a negative limit…) stops the app with a list of every problem instead of being silently
+replaced by a default. Check the configuration without starting anything:
+
+```bash
+python -m app.check_config      # prints every setting, secrets only as "set" / "not set"
+```
+
+Secrets (`FLASK_SECRET_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `INVITE_CODE`, `BACKUP_KEY`, `DATABASE_URL`) can also be
+read from a file: set `NAME_FILE=/path/to/file` instead of `NAME` (Docker / Kubernetes secrets).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
+| `APP_ENV` | `development` | `production` makes the AI key and HTTPS-only cookies mandatory and never generates a new session secret; `development`, `test` |
+| `DATA_DIR` | `instance/` | Folder for the SQLite database and the generated session secret |
+| `BACKUP_RESTORE_URL` | empty | Scratch PostgreSQL database where `restore-check` restores a copy to prove it (wiped every time; never the live one) |
+| `PG_BIN_DIR` | PATH, then `C:\Program Files\PostgreSQL\16\bin` | Folder with `pg_dump` / `pg_restore` for PostgreSQL backups |
+| `DATABASE_URL` | empty (SQLite) | `postgresql://user:password@host:5432/db`: use PostgreSQL; the schema is migrated at start-up (Alembic). Shown in reports with the password masked |
+| `ADMIN_MFA_REQUIRED` | `0` | `1` = admins must switch on two-factor sign-in before using the app |
+| `WORKER_MODE` | `inline` | `inline`: analysis threads inside the web process (the laptop). `external`: run `flask --app app worker` processes; the web process only queues |
+| `WORKER_POLL_SECONDS` | `2` | Idle worker checks the queue this often |
+| `STALE_PROCESSING_MINUTES` | `15` | A resume processing longer than this (its worker died) goes back to the queue |
+| `SHUTDOWN_TIMEOUT` | `25` | Seconds a stopping server waits for resumes being analyzed (keep below the orchestrator's grace period) |
 | `LLM_PROVIDER` | `gemini` | AI provider: `deepseek` or `gemini` |
 | `DEEPSEEK_API_KEY` | — (required for DeepSeek) | DeepSeek API key |
 | `DEEPSEEK_MODEL` | `deepseek-flash` | DeepSeek model (thinking mode is switched off to save tokens) |
@@ -178,13 +199,13 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 | `GEMINI_FALLBACK_MODEL` | empty | Comma-separated chain tried while the main model is rate-limited, overloaded or out of daily quota |
 | `GEMINI_CONCURRENCY` | `2` | Parallel AI requests, for either provider |
 | `GEMINI_MAX_RETRIES` | `5` | Retries on 429/5xx before a resume is marked failed, for either provider |
-| `FLASK_SECRET_KEY` | generated | Session secret; generated into `instance/.secret_key` if unset |
-| `SESSION_COOKIE_SECURE` | `0` | Set to `1` when served over HTTPS |
+| `FLASK_SECRET_KEY` | generated | Session secret (at least 32 characters); outside production it is generated into `instance/.secret_key` if unset |
+| `SESSION_COOKIE_SECURE` | `0`; `1` in production | Cookies only over HTTPS; cannot be `0` in production |
 | `INVITE_CODE` | empty | Initial invite code; until an admin saves the registration settings, a non-empty code opens sign-up with this code |
 | `DAILY_RESUME_LIMIT` | `30` | Initial limit of resumes per recruiter per 24 hours (0 = none); admins change it in the app |
 | `DAILY_AI_CHECK_LIMIT` | `20` | Initial limit of AI vacancy checks per recruiter per 24 hours (0 = none); the dictionary check always runs; admins change it in the app |
-| `BACKUP_OFFSITE_DIR` | empty | Folder outside this disk for encrypted backups (`scripts/backup_offsite.py`) |
-| `BACKUP_KEY` | empty | Key for encrypted backups; create with `python scripts/backup_offsite.py --generate-key` |
+| `BACKUP_OFFSITE_DIR` | empty | Folder outside this disk for encrypted backups (`flask --app app backup-offsite`) |
+| `BACKUP_KEY` | empty | Key for encrypted backups (checked at start-up); create with `flask --app app generate-backup-key` |
 | `STATS_UTC_OFFSET` | `5` | Hours added to UTC when statistics group events by day (Kazakhstan: 5) |
 | `STARTER_SESSION` | `1` | Give every new user an example session with a Python vacancy (`0` = off) |
 | `TRUSTED_PROXIES` | `127.0.0.1,::1` | Peers allowed to pass the visitor IP (`CF-Connecting-IP` / `X-Forwarded-For`) and the scheme (`X-Forwarded-Proto`); needed for rate limits and HSTS behind Cloudflare Tunnel |
@@ -199,12 +220,31 @@ All settings come from environment variables (or `.env`, which is git-ignored).
 | Run (dev) | `flask --app app run --debug` |
 | Create an admin | `flask --app app create-admin` |
 | Delete old sessions now | `flask --app app purge-old [--days N]` |
-| Back up the database | `python scripts/backup_db.py [--out DIR] [--keep N]` |
+| Back up the database | `flask --app app backup [--out DIR] [--keep N]` |
+| Encrypted copy outside this disk | `flask --app app backup-offsite [--out DIR] [--keep N]` |
+| Same, only when the USB drive is in and the copy is old (scheduled task) | `flask --app app backup-auto` |
+| Prove a copy can be restored | `flask --app app restore-check [FILE] [--restore-to PATH]` |
+| Check the live database and the queue | `flask --app app db-check` |
+| Apply PostgreSQL migrations | `flask --app app db-upgrade` (also automatic at start-up) |
+| Analysis worker (with `WORKER_MODE=external`) | `flask --app app worker [--threads N]`; several can run at once |
+| Web on Linux with separate workers | `gunicorn -c python:app.gunicorn_conf "app:create_app()"` |
+| Move the data from SQLite to PostgreSQL | `flask --app app db-move --to postgresql://… [--replace]` (site stopped) |
+| New backup key | `flask --app app generate-backup-key` |
+| Switch off 2FA for a locked-out user | `flask --app app reset-2fa USER` |
+| One-time password reset link | `flask --app app reset-link USER [--base-url URL]` |
+| Check the configuration | `python -m app.check_config` (or `flask --app app config-check`) |
 | Run (production) | `waitress-serve --host 0.0.0.0 --port 8000 --call app:create_server_app` |
 | Tests | `pytest -q` (Gemini is mocked, no key needed) |
 | Lint and types | `ruff check .` and `mypy` |
 | Smoke test | `python scripts/smoke_test.py [--pipeline \| --bias \| --list-models]` |
 | Regenerate samples | `python scripts/make_samples.py` |
+
+Service commands (APP-09) read the same validated configuration as the server, so
+`DATA_DIR`, `*_FILE` secrets and the production rules apply to them too. Every one exits
+with code 0 on success and 1 with a one-line reason otherwise. In Docker run them in the
+container, e.g. `docker compose -f deploy/docker-compose.yml exec app flask --app app backup`.
+`scripts/backup_db.py`, `backup_offsite.py` and `restore_check.py` still work (the scheduled
+task uses them); they now call the same code in `app/services/backup.py`.
 
 ## API usage (keeping the AI bill small)
 
@@ -253,8 +293,16 @@ it and prints the row counts; `--restore-to PATH` writes the restored database.
 .\.venv\Scripts\python.exe scripts\backup_offsite.py --generate-key   # once; put it into .env as BACKUP_KEY
 .\.venv\Scripts\python.exe scripts\backup_offsite.py                  # BACKUP_OFFSITE_DIR from .env
 .\.venv\Scripts\python.exe scripts\restore_check.py
-powershell -ExecutionPolicy Bypass -File scripts\register_backup_task.ps1   # daily at 03:00, both scripts
+powershell -ExecutionPolicy Bypass -File scripts\register_backup_task.ps1   # automatic, see below
 ```
+
+**The USB drive does not have to stay plugged in.** The scheduled task runs
+`flask --app app backup-auto` every 30 minutes and at sign-in, without a window and on battery
+too: when the drive is connected and the newest copy is older than 20 hours, it makes a copy
+and verifies it; when there has been no verified copy for 3 days, a Windows notification asks
+to plug the drive in (at most once a day), and a failed backup also shows one. Plugging the
+drive in for a few minutes every couple of days is enough. Another drive letter is fine: any
+drive with a `hrscreen-backups` folder at its root is used.
 
 Store `BACKUP_KEY` in a password manager with two people: without it no copy can be read.
 
@@ -283,7 +331,9 @@ Open <http://127.0.0.1:8000> and sign in.
 
 - The image runs as the non-root user `app` with
   [waitress](https://docs.pylonsproject.org/projects/waitress/) on port 8000 and has a
-  health check on `/healthz` (`docker ps` shows `healthy`).
+  health check on `/healthz` (`docker ps` shows `healthy`). `/readyz` answers 503 while the
+  database is unavailable or the server is stopping; `docker stop -t 30` lets the analysis in
+  progress finish (APP-08).
 - The SQLite database, the generated session secret and backups live in the
   `/app/instance` volume, so data survives `docker restart` and replacing the container
   with a new image (`docker rm -f enbek` + the same `docker run`).
@@ -340,11 +390,18 @@ issues in [`PROGRESS.md`](PROGRESS.md).
 ## Security and privacy
 
 - Secrets only from the environment; the key is never logged or printed.
-- Login required on every page except `/login` and `/healthz`. Passwords are hashed with
+- Login required on every page except `/login`, `/healthz` and `/readyz`. Passwords are hashed with
   Argon2id; failed logins are limited (5 per 15 minutes per username and per IP); the
   session is renewed on login and expires after 12 hours. Recruiters see only their own
   sessions (other sessions answer 404); admins see all and manage users. Opening,
   exporting and deleting a session is written to an audit log (`/admin/audit`).
+- Two-factor sign-in (SEC-01): any user can switch it on in **Profile** (click your name):
+  a 6-digit code from an authenticator app (RFC 6238) after the password, plus 10 one-time
+  recovery codes. `ADMIN_MFA_REQUIRED=1` makes it mandatory for admins. Users change their
+  own password in Profile; a forgotten password is reset with a one-time link (valid 1 hour)
+  that an admin creates on the Users page and passes on — there is no e-mail sending.
+  Changing the password or switching 2FA on/off signs out the user's other sessions.
+  Locked out completely: `flask --app app reset-2fa USER`, `flask --app app reset-link USER`.
 - CSRF tokens on every state-changing request; strict Content-Security-Policy (no inline
   scripts or styles), `X-Frame-Options: DENY`, `nosniff`, restrictive referrer and
   permissions policies, HSTS over HTTPS, `HttpOnly` + `SameSite=Lax` cookies.

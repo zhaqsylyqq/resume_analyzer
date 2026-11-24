@@ -24,6 +24,17 @@
 | 18 | S3 example session for new users + delete a vacancy | done |
 | 20 | S5 user feedback: “Подходят” tile filter, mobile layout, score colours | done |
 | 19 | S4 (SIS 10-11): real client IP behind the tunnel, unique email, audit de-dup; CR-01 candidate pipeline | done |
+| 34 | CI fix: "Tests on PostgreSQL" was red since APP-02 — `ubuntu-latest` (26.04) has only PostgreSQL 18 tools and pg_restore 18 cannot restore into 16. Backups now use the client tools of the server's major version (clear error otherwise); the job runs on `ubuntu-24.04` ([spec](docs/specs/APP-03-data-move.md)) | done |
+| 33 | APP-06/07: rate-limit counters in the app database (shared by all processes, no Redis); 429 + Retry-After on uploads, analysis, AI checks, exports, password reset and account secrets ([spec](docs/specs/APP-06-07-rate-limits.md)) | done |
+| 32 | APP-05: with external workers the upload only stores the file; the worker extracts the text, drops the file afterwards; migration 0002 ([spec](docs/specs/APP-05-parsing-in-worker.md)) | done |
+| 31 | APP-04: `WORKER_MODE=external` + `flask --app app worker` (database queue, SKIP LOCKED, stale requeue, graceful stop); gunicorn for Linux; compose `worker` service ([spec](docs/specs/APP-04-worker.md)) | done |
+| 30 | APP-03: `db-move` SQLite → PostgreSQL with per-table count + SHA-256 comparison; PostgreSQL backups (encrypted pg_dump, restore check), combined coverage in CI ([spec](docs/specs/APP-03-data-move.md)) | done |
+| 29 | APP-02: PostgreSQL support (`DATABASE_URL`), Alembic migrations, SKIP LOCKED queue claim, suite runs on both engines, compose `db` service ([spec](docs/specs/APP-02-postgresql.md)) | done; data move is APP-03 |
+| 28 | Backup without keeping the USB drive in: `backup-auto` every 30 min copies when the drive is connected, Windows reminder after 3 days without a copy ([spec](docs/specs/APP-09-service-commands.md)) | done |
+| 27 | SEC-01: two-factor sign-in (TOTP + recovery codes), own password change, one-time password reset links from admins, `ADMIN_MFA_REQUIRED` ([spec](docs/specs/SEC-01-mfa-password-reset.md)) | done |
+| 26 | APP-09: service commands `flask --app app backup / backup-offsite / restore-check / db-check / generate-backup-key`; backup logic in `app/services/backup.py`, scripts kept as wrappers ([spec](docs/specs/APP-09-service-commands.md)) | done |
+| 25 | APP-08: `/readyz` readiness check, graceful shutdown on SIGTERM / Ctrl+C (finishes resumes in analysis, `SHUTDOWN_TIMEOUT`); gunicorn deferred to APP-04 ([spec](docs/specs/APP-08-shutdown-health.md)) | done |
+| 24 | APP-01: one validated configuration — fail fast on bad values, `APP_ENV=production` profile, secrets from files, `DATA_DIR`, `python -m app.check_config` ([spec](docs/specs/APP-01-config.md)) | done |
 | 23 | Stage 1 CI (CI-01…CI-04): ruff + mypy + coverage ≥ 90 %, Semgrep / pip-audit / gitleaks / Trivy (report-only until 2026-12-01), two-stage image pinned by digest with scan and SBOM, actions pinned by SHA, Dependabot, CODEOWNERS ([spec](docs/specs/CI-stage1.md)) | done in code; owner steps in the spec |
 | 22 | SEC-02a: no personal data in AI requests — local redaction and local extraction of name, contacts, demographics ([spec](docs/specs/SEC-02a-redaction.md)) | done |
 | 21 | Enterprise roadmap, stage 0 (QW-01…QW-06): offsite backup, AI check quota, locked dependencies, HTTPS behind the proxy, queue resume, repository hygiene ([spec](docs/specs/QW-stage0.md)) | done in code; owner steps in the spec |

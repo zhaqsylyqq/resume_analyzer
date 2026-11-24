@@ -1,19 +1,68 @@
 from __future__ import annotations
 
+import os
 import re
 
 import pytest
 
 from app import create_app
 
+# APP-02: TEST_DATABASE_URL=postgresql://… runs the whole suite on PostgreSQL (CI does both).
+# The database is wiped: never point it at real data.
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
+# A developer's .env may point DATABASE_URL at the live PostgreSQL database (the laptop does).
+# Tests must never touch it: empty values win over .env (python-dotenv never overrides them).
+for _name in ("DATABASE_URL", "DATABASE_URL_FILE", "BACKUP_RESTORE_URL", "BACKUP_RESTORE_URL_FILE"):
+    os.environ[_name] = ""
+ON_POSTGRES = bool(TEST_DATABASE_URL)
+PG_TABLES = ("rate_counters", "rate_locks", "password_resets", "llm_usage", "candidate_status", "audit_log", "settings", "scores",
+             "demographics", "resumes", "vacancies", "sessions", "users")
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "sqlite_only: needs the SQLite file (file backups and the like)")
+
+
+def pytest_collection_modifyitems(config, items):
+    if ON_POSTGRES:
+        skip = pytest.mark.skip(reason="SQLite-only test (TEST_DATABASE_URL is PostgreSQL)")
+        for item in items:
+            if "sqlite_only" in item.keywords:
+                item.add_marker(skip)
+
+
+@pytest.fixture(scope="session")
+def _postgres_schema():
+    if not ON_POSTGRES:
+        return None
+    import psycopg
+
+    from app.services import migrations
+
+    with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
+        conn.execute("DROP SCHEMA public CASCADE")
+        conn.execute("CREATE SCHEMA public")
+    migrations.upgrade(TEST_DATABASE_URL)
+    return TEST_DATABASE_URL
+
+
+def _database_for_test(tmp_path, url):
+    if not url:
+        return str(tmp_path / "test.db")
+    import psycopg
+
+    with psycopg.connect(url, autocommit=True) as conn:
+        conn.execute(f"TRUNCATE {', '.join(PG_TABLES)} RESTART IDENTITY CASCADE")
+    return url
+
 
 @pytest.fixture()
-def app(tmp_path):
+def app(tmp_path, _postgres_schema):
     app = create_app(
         {
             "TESTING": True,
             "SECRET_KEY": "test-secret",
-            "DATABASE": str(tmp_path / "test.db"),
+            "DATABASE": _database_for_test(tmp_path, _postgres_schema),
             "SYNC_JOBS": True,
             # Pin the provider: a developer's .env (e.g. LLM_PROVIDER=deepseek with a real key)
             # must never route tests to a live API.

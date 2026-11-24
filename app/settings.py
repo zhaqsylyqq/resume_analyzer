@@ -7,11 +7,11 @@ recruiter (DAILY_AI_CHECK_LIMIT, default 20).
 """
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
 from .services import storage
+from .services.db import Database
 
 MAX_LIMIT = 10_000
 
@@ -36,7 +36,7 @@ def _int_setting(saved: dict[str, str], key: str, default: Any, fallback: int) -
         return fallback
 
 
-def load(db: sqlite3.Connection, config: dict[str, Any]) -> AppSettings:
+def load(db: Database, config: dict[str, Any]) -> AppSettings:
     saved = storage.get_settings(db)
     env_code = config.get("INVITE_CODE", "") or ""
     limit = _int_setting(saved, "daily_limit", config.get("DAILY_RESUME_LIMIT", 30), 30)
@@ -50,7 +50,7 @@ def load(db: sqlite3.Connection, config: dict[str, Any]) -> AppSettings:
     )
 
 
-def save(db: sqlite3.Connection, value: AppSettings) -> None:
+def save(db: Database, value: AppSettings) -> None:
     storage.save_settings(db, {
         "registration_open": "1" if value.registration_open else "0",
         "require_code": "1" if value.require_code else "0",
