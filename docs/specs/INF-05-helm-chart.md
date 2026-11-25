@@ -6,7 +6,7 @@
 
 | Object | Purpose |
 |---|---|
-| Deployment `-web` | gunicorn (`WEB_PROCESSES` × `WEB_THREADS`), `WORKER_MODE=external`; startup/liveness `/healthz`, readiness `/readyz` (503 while the database is down or the pod stops, APP-08); `maxUnavailable: 0`, `maxSurge: 1`, `preStop` 5 s so the Service drops the pod before gunicorn stops; metrics of all gunicorn processes via `PROMETHEUS_MULTIPROC_DIR` (OBS-01) |
+| Deployment `-web` | gunicorn (`WEB_PROCESSES` × `WEB_THREADS`), `WORKER_MODE=external`; startup/liveness `/healthz`, readiness `/readyz` (503 while the database is down or the pod stops, APP-08); `maxUnavailable: 0`, `maxSurge: 1`, `preStop` 10 s so the Service drops the pod before gunicorn stops (5 s lost 1 request in 806 in a kind run); metrics of all gunicorn processes via `PROMETHEUS_MULTIPROC_DIR` (OBS-01) |
 | Deployment `-worker` | `flask --app app worker --threads N --metrics-port 9101`; probes on the metrics port; finishes resumes in hand on SIGTERM (grace 35 s) |
 | Job `-migrate` | Helm hook pre-install/pre-upgrade: `flask --app app db-upgrade` (the app also migrates at start under a lock) |
 | CronJob `-purge` | `purge-old` daily (R1 retention) |

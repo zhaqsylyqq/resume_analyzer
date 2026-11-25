@@ -68,8 +68,9 @@ spec:
             failureThreshold: 2
           lifecycle:
             preStop:
-              # let the Service drop this pod before gunicorn stops taking requests
-              exec: {command: ["sleep", "5"]}
+              # let every node drop this pod from the Service before gunicorn stops taking requests
+              # (5 s lost 1 request in 806 in the kind test: endpoint updates can take longer)
+              exec: {command: ["sleep", "10"]}
           resources:
             {{- toYaml .Values.web.resources | nindent 12 }}
           securityContext:

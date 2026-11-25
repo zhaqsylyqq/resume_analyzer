@@ -80,7 +80,8 @@ jobs:
           scan-type: fs
           scan-ref: .
           scanners: misconfig,secret
-          skip-dirs: instance,.venv
+          # policies/tests holds pods that are bad on purpose (each must be refused by a Kyverno rule)
+          skip-dirs: instance,.venv,deploy/platform/policies/tests
           format: sarif
           output: reports/trivy-fs.sarif
           exit-code: "1"

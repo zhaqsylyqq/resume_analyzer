@@ -88,8 +88,8 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
-# Seconds a stopping pod gets: SHUTDOWN_TIMEOUT (25 s) to finish analyses + margin (APP-08)
-terminationGracePeriodSeconds: 35
+# Seconds a stopping pod gets: preStop 10 s + SHUTDOWN_TIMEOUT 25 s to finish analyses + margin (APP-08)
+terminationGracePeriodSeconds: 40
 
 # INF-06: default-deny in the namespace, then only the paths the app needs (plan, section 7).
 # Standard NetworkPolicy cannot filter by domain name: the AI provider is reached as "any
