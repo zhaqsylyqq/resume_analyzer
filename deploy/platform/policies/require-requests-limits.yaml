@@ -1,0 +1,30 @@
+# CD-03: every container states what it needs (CPU and memory requests) and a memory limit,
+# so one pod cannot starve the single node. No CPU limit on purpose (throttling hurts more).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: hrscreen-require-requests-limits
+  annotations:
+    policies.kyverno.io/title: Requests and a memory limit
+spec:
+  background: true
+  rules:
+    - name: requests-and-memory-limit
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [hrscreen, hrscreen-staging]
+      validate:
+        failureAction: Audit
+        message: "Every container needs resources.requests.cpu, resources.requests.memory and resources.limits.memory."
+        pattern:
+          spec:
+            =(initContainers):
+              - resources:
+                  requests: {cpu: "?*", memory: "?*"}
+                  limits: {memory: "?*"}
+            containers:
+              - resources:
+                  requests: {cpu: "?*", memory: "?*"}
+                  limits: {memory: "?*"}

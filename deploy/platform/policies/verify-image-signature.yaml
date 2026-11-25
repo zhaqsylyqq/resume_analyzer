@@ -1,0 +1,33 @@
+# CD-03: the image must carry the cosign keyless signature made by build.yml of this
+# repository on main or a v* tag (CD-01). Kyverno replaces the tag with the verified digest.
+# Checked at admission; "required" means an image without that signature is refused.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: hrscreen-verify-image-signature
+  annotations:
+    policies.kyverno.io/title: Signed by our build workflow
+spec:
+  background: false
+  webhookTimeoutSeconds: 30
+  failurePolicy: Fail   # if Kyverno cannot check, the app namespaces do not start new pods
+  rules:
+    - name: signed-by-build-yml
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [hrscreen, hrscreen-staging]
+      verifyImages:
+        - imageReferences: ["ghcr.io/zhaqsylyqq/resume_analyzer*"]
+          failureAction: Audit
+          required: true
+          mutateDigest: true
+          verifyDigest: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: https://token.actions.githubusercontent.com
+                    subjectRegExp: "^https://github\\.com/zhaqsylyqq/resume_analyzer/\\.github/workflows/build\\.yml@refs/(heads/main|tags/v[0-9].*)$"
+                    rekor:
+                      url: https://rekor.sigstore.dev

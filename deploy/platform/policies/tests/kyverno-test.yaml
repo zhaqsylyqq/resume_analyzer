@@ -1,0 +1,24 @@
+# CD-03: `kyverno test deploy/platform/policies/tests` (offline; the signature rule needs the
+# registry and is checked in the kind cluster of chart.yml instead)
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: hrscreen-policies
+policies:
+  - ../restrict-image-registries.yaml
+  - ../disallow-latest-tag.yaml
+  - ../require-requests-limits.yaml
+  - ../disallow-host-access.yaml
+resources:
+  - resources.yaml
+results:
+  - {policy: hrscreen-restrict-image-registries, rule: app-image-by-digest, kind: Pod, resources: [good, no-limits, host-network, host-path], result: pass}
+  - {policy: hrscreen-restrict-image-registries, rule: app-image-by-digest, kind: Pod, resources: [docker-hub, latest-tag, untagged], result: fail}
+  - {policy: hrscreen-disallow-latest-tag, rule: no-latest, kind: Pod, resources: [good, docker-hub, no-limits], result: pass}
+  - {policy: hrscreen-disallow-latest-tag, rule: no-latest, kind: Pod, resources: [latest-tag, untagged], result: fail}
+  - {policy: hrscreen-require-requests-limits, rule: requests-and-memory-limit, kind: Pod, resources: [good, docker-hub], result: pass}
+  - {policy: hrscreen-require-requests-limits, rule: requests-and-memory-limit, kind: Pod, resources: [no-limits], result: fail}
+  - {policy: hrscreen-disallow-host-access, rule: no-host-namespaces-or-ports, kind: Pod, resources: [good], result: pass}
+  - {policy: hrscreen-disallow-host-access, rule: no-host-namespaces-or-ports, kind: Pod, resources: [host-network], result: fail}
+  - {policy: hrscreen-disallow-host-access, rule: no-host-path, kind: Pod, resources: [good], result: pass}
+  - {policy: hrscreen-disallow-host-access, rule: no-host-path, kind: Pod, resources: [host-path], result: fail}
