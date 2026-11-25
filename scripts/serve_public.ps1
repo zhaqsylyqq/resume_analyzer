@@ -22,6 +22,7 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $waitress = Join-Path $root ".venv\Scripts\waitress-serve.exe"
+$python = Join-Path $root ".venv\Scripts\python.exe"
 
 if (-not (Test-Path $Cloudflared)) {
     $found = Get-Command cloudflared -ErrorAction SilentlyContinue
@@ -39,6 +40,17 @@ if (-not $env:TUNNEL_TOKEN) {
 }
 
 $env:SESSION_COOKIE_SECURE = "1"
+# APP-01: the public site runs with the strict profile; a wrong setting stops it here, before the tunnel opens.
+$env:APP_ENV = "production"
+Push-Location $root
+try {
+    $check = & $python -m app.check_config
+    if ($LASTEXITCODE -ne 0) {
+        $check | Write-Host
+        throw "Configuration is invalid (see above). Fix .env and run again."
+    }
+}
+finally { Pop-Location }
 $app = Start-Process -FilePath $waitress -WorkingDirectory $root -NoNewWindow -PassThru `
     -ArgumentList "--host=127.0.0.1", "--port=$Port", "--threads=8", "--call", "app:create_server_app"
 Write-Host "App started on http://127.0.0.1:$Port (pid $($app.Id)); starting tunnel '$Tunnel'..."

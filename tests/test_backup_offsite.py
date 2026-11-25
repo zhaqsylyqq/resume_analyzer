@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.sqlite_only  # file backups of the SQLite database
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import backup_offsite as offsite  # noqa: E402
 import restore_check as restore  # noqa: E402

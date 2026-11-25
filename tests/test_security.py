@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from flask import Blueprint
 
@@ -11,7 +13,11 @@ def app_with_post(app):
         return {"ok": True}
 
     app.register_blueprint(bp)
-    return app
+    from app import policy
+
+    policy.declare("probe.probe", policy.SIGNED_IN)  # APP-10: every route needs a rule
+    yield app
+    policy.RULES.pop("probe.probe", None)
 
 
 def test_security_headers_present(client):
@@ -21,6 +27,31 @@ def test_security_headers_present(client):
     assert headers["X-Content-Type-Options"] == "nosniff"
     assert headers["X-Frame-Options"] == "DENY"
     assert headers["Referrer-Policy"] == "same-origin"
+    # SEC-04: site isolation and no copies of pages with personal data
+    assert headers["Cross-Origin-Opener-Policy"] == headers["Cross-Origin-Resource-Policy"] == "same-origin"
+    assert headers["Cross-Origin-Embedder-Policy"] == "require-corp"
+    assert headers["Cache-Control"] == "no-store"
+
+
+def test_reflected_filter_values_are_escaped(client, csrf, fake_gemini):
+    """SEC-04 (ZAP 10031): the ranking puts the query's filter values back into links and
+    inputs; they are always escaped."""
+    from .helpers import create_session, resume_text, upload
+
+    session_id = create_session(client, csrf)
+    upload(client, csrf, session_id, [("cv.txt", resume_text(1))])  # the search box needs a candidate
+    vacancy_id = re.search(r"/vacancies/(\d+)", client.get(f"/sessions/{session_id}").get_data(as_text=True)).group(1)
+    payload = '"><img src=x onerror=alert(1)>'
+    page = client.get(f"/sessions/{session_id}/vacancies/{vacancy_id}",
+                      query_string={"q": payload, "top": payload, "status": payload, "fit": payload}).get_data(as_text=True)
+    assert "<img src=x" not in page and "onerror=alert(1)>" not in page
+    assert "&#34;&gt;&lt;img src=x onerror=alert(1)&gt;" in page  # shown back to the user, as text
+
+
+def test_static_files_stay_cacheable(client):
+    response = client.get("/static/css/app.css")
+    assert response.status_code == 200 and "no-store" not in response.headers.get("Cache-Control", "")
+    response.close()
 
 
 def test_post_without_csrf_token_is_rejected(app_with_post):
@@ -86,16 +117,16 @@ def test_request_scheme_and_external_urls_follow_the_trusted_proxy(app):
 
     app.register_blueprint(bp)
     app.config["TRUSTED_PROXIES"] = ("127.0.0.1",)
-    import app.auth as auth
-    from app.auth import PUBLIC_ENDPOINTS  # the probe is outside login: call it as a public endpoint
-    auth.PUBLIC_ENDPOINTS = PUBLIC_ENDPOINTS | {"scheme_probe.scheme"}
+    from app import policy
+
+    policy.declare("scheme_probe.scheme", policy.PUBLIC)  # APP-10: every route needs a rule
     try:
         c = app.test_client()
         behind = c.get("/_scheme", headers={"X-Forwarded-Proto": "https", "Host": "hrscreen.date"}).get_json()
         direct = c.get("/_scheme", headers={"X-Forwarded-Proto": "https"},
                        environ_base={"REMOTE_ADDR": "203.0.113.9"}).get_json()
     finally:
-        auth.PUBLIC_ENDPOINTS = PUBLIC_ENDPOINTS
+        policy.RULES.pop("scheme_probe.scheme", None)
     assert behind == {"scheme": "https", "url": "https://hrscreen.date/login"}
     assert direct["scheme"] == "http"
 

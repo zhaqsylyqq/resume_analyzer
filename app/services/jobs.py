@@ -1,6 +1,6 @@
 """Background analysis with a fair, round-robin queue across sessions (Q1).
 
-One process-wide pool of GEMINI_CONCURRENCY worker threads serves every session. Sessions
+One process-wide pool of LLM_CONCURRENCY worker threads serves every session. Sessions
 with queued resumes form a rotation; a worker takes the next session, moves it to the back
 and analyzes one of its resumes, so sessions take turns resume by resume and a small batch
 is not stuck behind a big one. Per-resume failures are recorded and never stop a batch.
@@ -11,23 +11,26 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 
-from flask import Flask, current_app
+from flask import Flask, current_app, has_app_context
 
+from .. import metrics, observability
 from . import storage
-from .gemini import (
+from .llm import (
     AnalysisFailed,
     BillingExhausted,
     GeminiError,
-    GeminiService,
     GeminiUnavailable,
+    LLMService,
     QuotaExhausted,
     UsageCounter,
-    get_gemini,
+    get_llm,
     usage_scope,
 )
+from .parsing import parse_file
 from .schemas import VacancyInput
 
 log = logging.getLogger(__name__)
@@ -44,9 +47,50 @@ _lock = threading.Lock()
 _rotation: deque[int] = deque()  # sessions with pending resumes, next turn first
 _batches: dict[int, _Batch] = {}  # sessions that are running (queued or in flight)
 _workers = 0
+_draining = threading.Event()  # APP-08: set on shutdown; workers stop after the resume in hand
+
+
+def is_draining() -> bool:
+    return _draining.is_set()
+
+
+def drain(timeout: float) -> bool:
+    """APP-08: stop taking new resumes and wait for the ones being analyzed.
+
+    Returns True when nothing is in flight any more, False when `timeout` seconds passed first.
+    Resumes not started yet stay pending in the database; the next start resumes them (QW-05).
+    A resume cut off by a hard kill is moved back to pending by storage.init_db.
+    """
+    _draining.set()
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        with _lock:
+            busy = sum(b.in_flight for b in _batches.values())
+        if busy == 0:
+            return True
+        if time.monotonic() >= deadline:
+            log.warning("Shutdown: %d resume(s) still being analyzed after %ss; they will be retried", busy, timeout)
+            return False
+        time.sleep(0.1)
+
+
+def _reset_for_tests() -> None:
+    _draining.clear()
+
+
+def external(app: Flask | None = None) -> bool:
+    """APP-04: WORKER_MODE=external — separate `flask --app app worker` processes analyze
+    resumes; the web process only saves them as pending."""
+    if app is None:
+        if not has_app_context():
+            return False
+        app = current_app._get_current_object()  # type: ignore[attr-defined]
+    return app.config.get("WORKER_MODE") == "external"
 
 
 def is_running(session_id: int) -> bool:
+    if external():
+        return storage.session_has_work(storage.get_db(), session_id)
     with _lock:
         return session_id in _batches
 
@@ -54,7 +98,12 @@ def is_running(session_id: int) -> bool:
 def start(session_id: int) -> bool:
     """Queue a session for analysis; returns False if it was already queued."""
     app = current_app._get_current_object()  # type: ignore[attr-defined]
-    service = get_gemini()
+    service = get_llm()
+    if external(app):
+        return True  # the resumes are pending in the database; a worker process takes them
+    if _draining.is_set():
+        # Shutting down: the resumes are already saved as pending and run after the restart.
+        return False
     with _lock:
         added = session_id not in _rotation
         if added:
@@ -75,12 +124,14 @@ def resume_pending(app: Flask) -> list[int]:
     "analyze" again. When the AI provider is not configured nothing is queued and the
     server still starts.
     """
+    if external(app):
+        return []  # worker processes pick pending resumes up themselves
     with app.app_context():
         session_ids = storage.sessions_with_pending(storage.get_db())
         if not session_ids:
             return []
         try:
-            get_gemini()
+            get_llm()
         except GeminiError as exc:
             log.warning("Pending resumes not resumed: %s", exc)
             return []
@@ -90,16 +141,16 @@ def resume_pending(app: Flask) -> list[int]:
     return session_ids
 
 
-def _spawn_workers(app: Flask, service: GeminiService) -> None:
+def _spawn_workers(app: Flask, service: LLMService) -> None:
     global _workers
     with _lock:
-        wanted = max(1, app.config["GEMINI_CONCURRENCY"]) - _workers
+        wanted = max(1, app.config["LLM_CONCURRENCY"]) - _workers
         _workers += max(0, wanted)
     for i in range(max(0, wanted)):
         threading.Thread(target=_worker_thread, args=(app, service), name=f"analysis-{i}", daemon=True).start()
 
 
-def _worker_thread(app: Flask, service: GeminiService) -> None:
+def _worker_thread(app: Flask, service: LLMService) -> None:
     global _workers
     try:
         _worker(app, service)
@@ -113,7 +164,7 @@ def _worker_thread(app: Flask, service: GeminiService) -> None:
             _spawn_workers(app, service)
 
 
-def _worker(app: Flask, service: GeminiService) -> None:
+def _worker(app: Flask, service: LLMService) -> None:
     """Take turns between sessions until no session has pending resumes."""
     try:
         with app.app_context():
@@ -127,10 +178,10 @@ def _worker(app: Flask, service: GeminiService) -> None:
         log.exception("Analysis worker crashed")
 
 
-def _work_once(app: Flask, service: GeminiService, db) -> bool:
+def _work_once(app: Flask, service: LLMService, db) -> bool:
     """Analyze one resume of the next session in the rotation; False when idle."""
     with _lock:
-        if not _rotation:
+        if not _rotation or _draining.is_set():
             return False
         session_id = _rotation[0]
         _rotation.rotate(-1)  # this session goes to the back: the others get the next turns
@@ -206,22 +257,41 @@ def _remaining(db) -> dict[int, int]:
     return {row["session_id"]: row["n"] for row in rows}
 
 
-def _analyze(app: Flask, service: GeminiService, resume_id: int, language: str,
+def _analyze(app: Flask, service: LLMService, resume_id: int, language: str,
              usage: UsageCounter | None = None) -> None:
-    with usage_scope(usage or UsageCounter()):
-        _analyze_one(app, service, resume_id, language)
+    token = observability.set_request_id(f"resume-{resume_id}")  # OBS-01: log lines of this analysis
+    started = time.perf_counter()
+    try:
+        with usage_scope(usage or UsageCounter()):
+            _analyze_one(app, service, resume_id, language)
+    finally:
+        metrics.ANALYSIS_DURATION.observe(time.perf_counter() - started)
+        observability.reset_request_id(token)
 
 
-def _analyze_one(app: Flask, service: GeminiService, resume_id: int, language: str) -> None:
+def _analyze_one(app: Flask, service: LLMService, resume_id: int, language: str) -> None:
     db = storage.connect(app.config["DATABASE"])
     try:
         row = storage.get_resume(db, resume_id)
         if row is None:
             return
+        raw = storage.raw_file(row)
+        if raw is not None:  # APP-05: uploaded in external mode; extract the text here, not in the web process
+            parsed = parse_file(row["filename"], raw, max_bytes=app.config["MAX_FILE_BYTES"],
+                                max_chars=app.config["MAX_RESUME_CHARS"])
+            storage.save_parsed(db, resume_id, parsed.text, parsed.error)
+            if not parsed.ok:
+                return
+            row = storage.get_resume(db, resume_id)
+            if row is None:
+                return
         profile = storage.load_profile(row)
         if profile is None:
             profile = service.extract_profile(row["text"], language)
             storage.save_profile(db, resume_id, profile)
+            if profile.injection_signals:  # SEC-04: the resume talks to the AI; the score may be manipulated
+                storage.audit(db, "injection_suspected", session_id=row["session_id"], username="system",
+                              detail=f"resume={resume_id} signals={','.join(profile.injection_signals)}")
         # Loop so a vacancy added while this resume was being scored is scored too.
         for _ in range(3):
             vacancies = [VacancyInput(id=v["id"], title=v["title"], text=v["text"])

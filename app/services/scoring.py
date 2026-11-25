@@ -9,9 +9,11 @@ from __future__ import annotations
 import csv
 import io
 import json
-import sqlite3
 from dataclasses import dataclass, field
 from typing import Callable
+
+from . import storage
+from .db import Database
 
 TOP_CHOICES = (5, 10, 20)
 FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
@@ -36,9 +38,10 @@ class RankedCandidate:
     concerns: list[str] = field(default_factory=list)
     status: str = "new"  # CR-01 candidate pipeline
     note: str = ""
+    injection_suspected: bool = False  # SEC-04: the resume contains instructions for the AI
 
 
-def ranking(db: sqlite3.Connection, vacancy_id: int) -> list[RankedCandidate]:
+def ranking(db: Database, vacancy_id: int) -> list[RankedCandidate]:
     rows = db.execute(
         """
         SELECT r.id AS resume_id, r.filename, r.profile_json, s.score, s.verdict, s.summary, s.details_json,
@@ -54,14 +57,14 @@ def ranking(db: sqlite3.Connection, vacancy_id: int) -> list[RankedCandidate]:
     ranked: list[RankedCandidate] = []
     for position, row in enumerate(rows, start=1):
         rank = ranked[-1].rank if ranked and ranked[-1].score == row["score"] else position
-        profile = json.loads(row["profile_json"] or "{}")
+        profile = json.loads(storage.unseal("resumes", "profile_json", row["profile_json"]) or "{}")  # SEC-02b
         details = json.loads(row["details_json"] or "{}")
         contacts = profile.get("contacts") or {}
         ranked.append(
             RankedCandidate(
                 rank=rank,
                 resume_id=row["resume_id"],
-                filename=row["filename"],
+                filename=storage.unseal("resumes", "filename", row["filename"]) or "",
                 name=profile.get("full_name"),
                 headline=profile.get("headline"),
                 experience_years=profile.get("total_experience_years"),
@@ -76,6 +79,7 @@ def ranking(db: sqlite3.Connection, vacancy_id: int) -> list[RankedCandidate]:
                 concerns=details.get("concerns", []),
                 status=row["status"] or "new",
                 note=row["note"] or "",
+                injection_suspected=bool(profile.get("injection_signals")),
             )
         )
     return ranked

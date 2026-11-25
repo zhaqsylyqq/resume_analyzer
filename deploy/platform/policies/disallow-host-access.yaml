@@ -1,0 +1,41 @@
+# CD-03: no host paths, host network, host PID/IPC or host ports in the app namespaces
+# (Pod Security "restricted" forbids these too; this keeps the rule even if the label is lost).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: hrscreen-disallow-host-access
+  annotations:
+    policies.kyverno.io/title: No host access
+spec:
+  background: true
+  rules:
+    - name: no-host-path
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [hrscreen, hrscreen-staging]
+      validate:
+        failureAction: Audit
+        message: "hostPath volumes are not allowed."
+        pattern:
+          spec:
+            =(volumes):
+              - X(hostPath): "null"
+    - name: no-host-namespaces-or-ports
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [hrscreen, hrscreen-staging]
+      validate:
+        failureAction: Audit
+        message: "hostNetwork, hostPID, hostIPC and hostPort are not allowed."
+        pattern:
+          spec:
+            =(hostNetwork): false
+            =(hostPID): false
+            =(hostIPC): false
+            containers:
+              - =(ports):
+                  - X(hostPort): "null"

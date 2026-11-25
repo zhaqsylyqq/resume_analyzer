@@ -26,7 +26,7 @@ has the user-facing setup guide.
   [`docs/DEPLOY.md`](docs/DEPLOY.md).
 - `LLM_PROVIDER` selects the AI provider. The owner uses **DeepSeek** (`deepseek-flash`, a
   prepaid balance of about $5). Gemini still works as a provider. Both go through
-  `GeminiService` in `app/services/gemini.py`, which delegates the HTTP request to a
+  `LLMService` in `app/services/llm.py` (APP-10; `gemini.py` / `GeminiService` remain as aliases), which delegates the HTTP request to a
   backend: `GeminiBackend` or `openai_compat.OpenAICompatBackend`. See
   [`docs/specs/F7b-deepseek-provider.md`](docs/specs/F7b-deepseek-provider.md).
 - HTTP 402 (empty prepaid balance) already stops a batch fast with a `billing_exhausted`
@@ -94,9 +94,12 @@ app/
   config.py            settings from environment variables
   i18n.py              RU/KK translations (TRANSLATIONS dict)
   security.py          CSRF, security headers, CSP
-  auth.py              A1/S1: login/logout, invite sign-up, roles, owner scoping, rate limit, admin
-                       users/audit/stats pages,
-                       `create-admin` CLI
+  policy.py            APP-10: access rule of every route (PUBLIC / SIGNED_IN / OWNER / ADMIN),
+                       checked before each request; a route without a rule is closed (404)
+  auth/                A1/S1/SEC-01 (APP-10 split): passwords.py, limits.py (sign-in/sign-up
+                       limits, client_ip), login.py (sign-in + 2FA, sign-up, reset links),
+                       admin.py (users/settings/stats/audit pages), commands.py (create-admin,
+                       reset-2fa, reset-link); __init__.py re-exports the old names
   retention.py         R1: purge sessions older than RETENTION_DAYS, `purge-old` CLI
   settings.py          S2: admin-editable settings (registration, invite code, daily limit)
   starter.py           S3: example session for new users (data/starter_vacancy_ru.txt)
@@ -104,11 +107,13 @@ app/
                        vacancies.py (ranking, candidate status CR-01, exports, bias check)
   services/
     parsing.py         .pdf/.docx/.txt to text, size/page/zip limits, error codes
-    gemini.py          GeminiService: extract_profile, score, retries, cooldowns, fallback chain,
-                       402 fast-fail; GeminiBackend; get_gemini() picks the provider
+    llm.py             LLMService (was gemini.py/GeminiService): extract_profile, score, retries,
+                       cooldowns, fallback chain, 402 fast-fail; GeminiBackend; get_llm() picks
+                       the provider; gemini.py is a compatibility alias
     openai_compat.py   OpenAICompatBackend + deepseek_backend() (JSON mode, thinking off)
     schemas.py         pydantic schemas = Gemini response schemas
     anonymize.py       demographics-free view for scoring
+    injection.py       SEC-04: prompt-injection signals in resumes, prompt echo in answers
     jobs.py            shared worker pool, round-robin between sessions, ETA (Q1)
     storage.py         SQLite schema and queries
     scoring.py         ranking, Top-N with ties, CSV
@@ -119,7 +124,11 @@ app/
   prompts/             *.txt prompt templates (string.Template, $placeholders)
   templates/ static/   Jinja2 templates, CSS, vanilla JS
 docs/specs/            one spec per feature
-scripts/               smoke_test.py, make_samples.py, backup_db.py
+docs/security/         threat-model.md (SEC-04): threats, protections, DAST findings
+samples/adversarial/   SEC-04: 10 hostile resumes (prompt injection, markup) for the tests
+ci/                    dast_seed.py, dast_login.py, dast_summary.py for the ZAP scan (dast.yml)
+.zap/rules.tsv         ZAP baseline rule levels (FAIL = regression of an existing protection)
+scripts/               smoke_test.py (--adversarial: SEC-04 release check), make_samples.py, backup_db.py
 tests/                 pytest suite; tests/fakes.py holds the fake Gemini client
 ```
 

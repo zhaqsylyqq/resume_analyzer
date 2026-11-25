@@ -44,4 +44,6 @@ branch = true
 [tool.coverage.report]
 skip_empty = true
 show_missing = false
-fail_under = 90
+# One engine alone covers less (the other engine's branches); CI enforces 90 % on the
+# combined SQLite + PostgreSQL run (job "Coverage (both engines)").
+fail_under = 85

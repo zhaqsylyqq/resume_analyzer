@@ -1,0 +1,30 @@
+# CD-03: no ":latest" and no untagged images anywhere in the app namespaces.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: hrscreen-disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: No latest tag
+spec:
+  background: true
+  rules:
+    - name: no-latest
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [hrscreen, hrscreen-staging]
+      validate:
+        failureAction: Audit
+        message: "The tag ':latest' (or no tag at all) is not allowed: pin the image by digest."
+        foreach:
+          - list: "request.object.spec.[containers, initContainers, ephemeralContainers][]"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ element.image }}"
+                    operator: Equals
+                    value: "*:latest"
+                  - key: "{{ contains(element.image, ':') || contains(element.image, '@') }}"
+                    operator: Equals
+                    value: false

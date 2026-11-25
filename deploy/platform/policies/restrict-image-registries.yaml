@@ -1,0 +1,30 @@
+# CD-03: in the app namespaces only our own image, and only by digest (what build.yml signed).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: hrscreen-restrict-image-registries
+  annotations:
+    policies.kyverno.io/title: Only the app image from GHCR, by digest
+    policies.kyverno.io/description: >-
+      Pods in hrscreen and hrscreen-staging may only run ghcr.io/zhaqsylyqq/resume_analyzer
+      pinned by digest. Images from Docker Hub or anywhere else are refused (T-10).
+spec:
+  background: true
+  rules:
+    - name: app-image-by-digest
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [hrscreen, hrscreen-staging]
+      validate:
+        failureAction: Audit   # one week, then Enforce (docs/specs/CD-03-kyverno.md)
+        message: "Only ghcr.io/zhaqsylyqq/resume_analyzer@sha256:... may run here (signed by build.yml)."
+        pattern:
+          spec:
+            =(initContainers):
+              - image: "ghcr.io/zhaqsylyqq/resume_analyzer@sha256:*"
+            containers:
+              - image: "ghcr.io/zhaqsylyqq/resume_analyzer@sha256:*"
+            =(ephemeralContainers):
+              - image: "ghcr.io/zhaqsylyqq/resume_analyzer@sha256:*"

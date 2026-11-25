@@ -7,14 +7,54 @@ services:
   app:
     build: ..
     env_file: ../.env
+    # APP-04: web only (gunicorn, several processes); analysis runs in the `worker` service
+    command: ["gunicorn", "-c", "python:app.gunicorn_conf", "app:create_app()"]
     environment:
+      WORKER_MODE: external
+      # APP-01: strict profile. FLASK_SECRET_KEY must be set in .env (or kept in the volume).
+      # SEC-02b: likewise DATA_KEY (the same for app and worker: both read .env and the volume).
+      APP_ENV: production
       SESSION_COOKIE_SECURE: "1"
       # cloudflared reaches the app over the compose network, not loopback: trust that
       # network to pass the visitor IP (rate limits per visitor, see docs/specs/S4-*.md)
       TRUSTED_PROXIES: "127.0.0.1,::1,172.16.0.0/12"
+      # APP-02: PostgreSQL in the `db` service; the password comes from POSTGRES_PASSWORD in .env
+      DATABASE_URL: postgresql://hrscreen:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/hrscreen
+      # OBS-01: JSON log lines; metrics of all gunicorn processes added up (/metrics answers
+      # only inside the compose network, never through the tunnel)
+      LOG_FORMAT: json
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+    tmpfs:
+      - /tmp/prometheus
     volumes:
       - app-data:/app/instance
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
+    # APP-08: time to finish resumes in analysis on `docker compose down` (SHUTDOWN_TIMEOUT=25)
+    stop_grace_period: 30s
+
+  worker:
+    build: ..
+    env_file: ../.env
+    # Scale with `docker compose up -d --scale worker=2`: workers never take the same resume.
+    # OBS-01: the worker's own metrics on port 9101 inside the compose network (not published)
+    command: ["flask", "--app", "app", "worker", "--metrics-port", "9101"]
+    environment:
+      APP_ENV: production
+      WORKER_MODE: external
+      LOG_FORMAT: json
+      DATABASE_URL: postgresql://hrscreen:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/hrscreen
+    volumes:
+      - app-data:/app/instance
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      disable: true  # no HTTP port; the image's /healthz check is for the web service
+    restart: unless-stopped
+    stop_grace_period: 30s
 
   tunnel:
     image: cloudflare/cloudflared:2026.10.7
@@ -25,5 +65,22 @@ services:
       - app
     restart: unless-stopped
 
+  db:
+    image: postgres:16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
+    environment:
+      POSTGRES_USER: hrscreen
+      POSTGRES_DB: hrscreen
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrscreen -d hrscreen"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    # No ports: only the app reaches the database, over the compose network.
+
 volumes:
   app-data:
+  db-data:

@@ -30,3 +30,6 @@ uploads/
 .idea/
 .DS_Store
 Thumbs.db
+
+# INF-07: plain working copies of environment secrets (only secrets.enc.yaml is committed)
+deploy/envs/*/secrets.yaml

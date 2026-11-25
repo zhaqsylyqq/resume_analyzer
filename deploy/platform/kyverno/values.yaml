@@ -1,0 +1,23 @@
+# CD-03: Kyverno itself (Helm chart kyverno/kyverno 3.9.2 = Kyverno v1.19.2).
+#   helm repo add kyverno https://kyverno.github.io/kyverno/
+#   helm install kyverno kyverno/kyverno -n kyverno --create-namespace --version 3.9.2 -f deploy/platform/kyverno/values.yaml
+#   kubectl apply -f deploy/platform/policies/
+# One node: one replica of each controller (a broken webhook only affects the app namespaces,
+# see `webhooks` below, and the platform keeps working).
+admissionController:
+  replicas: 1
+backgroundController:
+  replicas: 1
+cleanupController:
+  replicas: 1
+reportsController:
+  replicas: 1
+config:
+  # never block the platform itself, whatever happens to Kyverno
+  resourceFiltersExcludeNamespaces: [kube-system, kube-public, kube-node-lease, kyverno, monitoring, argocd, cnpg-system]
+  webhooks:
+    - namespaceSelector:
+        matchExpressions:
+          - key: kubernetes.io/metadata.name
+            operator: NotIn
+            values: [kube-system, kube-public, kube-node-lease, kyverno, monitoring, argocd, cnpg-system]

@@ -1,12 +1,13 @@
-"""Home page, language switch and health check."""
+"""Home page, language switch, liveness (/healthz) and readiness (/readyz) checks."""
 from __future__ import annotations
 
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request
 
-from ..auth import owner_filter
 from ..i18n import LANG_COOKIE
+from ..policy import owner_filter
 from ..security import is_safe_redirect
-from ..services import storage
+from ..services import jobs, storage
+from ..services.db import DatabaseError
 
 bp = Blueprint("core", __name__)
 
@@ -27,4 +28,20 @@ def set_language(code: str):
 
 @bp.get("/healthz")
 def health():
+    """Liveness: the process answers. Never touches the database, so a slow disk can't get
+    a healthy process restarted."""
     return jsonify(status="ok")
+
+
+@bp.get("/readyz")
+def ready():
+    """APP-08 readiness: send traffic here only when the database answers and the server is
+    not shutting down. 503 tells a load balancer / Kubernetes to route around this copy."""
+    if jobs.is_draining():
+        return jsonify(status="shutting_down"), 503
+    try:
+        storage.get_db().execute("SELECT 1").fetchone()
+    except DatabaseError:
+        current_app.logger.exception("Readiness check: database unavailable")
+        return jsonify(status="database_unavailable"), 503
+    return jsonify(status="ready")

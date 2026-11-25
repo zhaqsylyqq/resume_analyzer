@@ -1,77 +1,395 @@
-"""Application configuration. Secrets come only from the environment."""
+"""Application configuration (APP-01).
+
+All settings come from the environment (or `.env`, loaded by create_app). They are parsed
+into one typed object, checked once at start-up, and a bad value stops the app with a list
+of every problem instead of being silently replaced by a default.
+
+Secrets (SECRET_NAMES) can also come from files: `FLASK_SECRET_KEY_FILE=/run/secrets/flask_key` reads the
+key from that file. Docker and Kubernetes mount secrets this way, so they never appear in
+`docker inspect` or in the process environment.
+
+`APP_ENV` picks the profile:
+- `development` (default): convenient defaults for a laptop.
+- `production`: stricter — the AI key must be set, cookies are HTTPS-only, and the app will not
+  invent a new session secret (a new key would log everyone out on every replica restart).
+- `test`: used by the test suite.
+"""
 from __future__ import annotations
 
+import ipaddress
 import os
 import secrets
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+ENVIRONMENTS = ("development", "production", "test")
+PROVIDERS = ("gemini", "deepseek")
+SECRET_NAMES = ("FLASK_SECRET_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "INVITE_CODE", "BACKUP_KEY", "DATABASE_URL",
+                "BACKUP_RESTORE_URL", "DATA_KEY", "DATA_KEY_OLD", "METRICS_TOKEN", "SENTRY_DSN")
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off", ""}
 
-def _int_env(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, default))
-    except ValueError:
+
+class ConfigError(RuntimeError):
+    """One or more settings are invalid. `problems` lists each one."""
+
+    def __init__(self, problems: list[str]) -> None:
+        self.problems = problems
+        super().__init__("Invalid configuration:\n" + "\n".join(f"  - {p}" for p in problems))
+
+
+@dataclass(frozen=True)
+class Settings:
+    app_env: str = "development"
+    # AI provider: "gemini" or "deepseek"
+    llm_provider: str = "gemini"
+    deepseek_api_key: str = ""
+    deepseek_model: str = "deepseek-flash"
+    deepseek_fallback_model: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    gemini_api_key: str = ""
+    gemini_model: str = ""
+    gemini_fallback_model: str = ""
+    gemini_concurrency: int = 2
+    gemini_max_retries: int = 5
+    # R1: sessions untouched for this many days are deleted (0 = keep forever)
+    retention_days: int = 90
+    # S1: sign-up code for /register (empty = only admins create users)
+    invite_code: str = ""
+    # S2 / QW-02: defaults per recruiter per 24 h until an admin saves others (0 = no limit)
+    daily_resume_limit: int = 30
+    daily_ai_check_limit: int = 20
+    # S3: give every new user an example session with a Python vacancy
+    starter_session: bool = True
+    # S1: hours added to UTC when statistics group events by day (Kazakhstan: +5)
+    stats_utc_offset: int = 5
+    # Peers allowed to tell the real client IP and scheme (QW-04). cloudflared runs on the same
+    # machine, so the default trusts loopback only; e.g. "127.0.0.1,::1,172.16.0.0/12" for compose.
+    trusted_proxies: tuple[str, ...] = ("127.0.0.1", "::1")
+    session_cookie_secure: bool = False
+    flask_secret_key: str = ""
+    # Where the SQLite database and the generated secret live; default: Flask's instance folder
+    data_dir: str = ""
+    # APP-02: postgresql://user:password@host:5432/db; empty = SQLite file <data>/app.db
+    database_url: str = ""
+    # APP-03: scratch PostgreSQL database where restore-check restores a copy to prove it (wiped each time)
+    backup_restore_url: str = ""
+    # APP-08: seconds a stopping server waits for resumes being analyzed (keep below the
+    # orchestrator's grace period: Docker 10 s by default, Kubernetes 30 s)
+    shutdown_timeout: int = 25
+    # APP-04: "inline" = analysis threads inside the web process (one process, the laptop);
+    # "external" = separate `flask --app app worker` processes take resumes from the database
+    worker_mode: str = "inline"
+    # APP-04: worker processes wait this long between queue checks when idle
+    worker_poll_seconds: int = 2
+    # APP-04: a resume "processing" longer than this belonged to a worker that died; it is requeued
+    stale_processing_minutes: int = 15
+    # APP-06: where rate-limit counters live: database (shared by all processes) or memory
+    rate_limit_store: str = "database"
+    # SEC-01: admins must switch on two-factor sign-in before using the app
+    admin_mfa_required: bool = False
+    # QW-01 / APP-09: encrypted copies go to this folder outside the host, sealed with this key
+    backup_offsite_dir: str = ""
+    backup_key: str = ""
+    # SEC-02b: key of the personal-data columns (base64, 32 bytes) and, while rotating, the
+    # previous keys (comma-separated). Empty: <data>/.data_key (generated outside production).
+    data_key: str = ""
+    data_key_old: str = ""
+    # OBS-01: log lines as text (laptop) or one JSON object per line (containers, Loki)
+    log_format: str = "text"
+    # OBS-01: /metrics also answers to "Authorization: Bearer <token>" (otherwise only to
+    # requests from this machine / the private network that did not come through Cloudflare)
+    metrics_token: str = ""
+    # OBS-01: send unexpected errors to Sentry (empty = off); no personal data is sent
+    sentry_dsn: str = ""
+    # Sources of secrets read from *_FILE, for the config report (never the values)
+    secret_sources: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env == "production"
+
+    def to_flask(self) -> dict[str, Any]:
+        """The Flask config keys the rest of the app reads (names unchanged since before APP-01)."""
+        return {
+            "APP_ENV": self.app_env,
+            "LLM_PROVIDER": self.llm_provider,
+            "DEEPSEEK_API_KEY": self.deepseek_api_key,
+            "DEEPSEEK_MODEL": self.deepseek_model,
+            "DEEPSEEK_FALLBACK_MODEL": self.deepseek_fallback_model,
+            "DEEPSEEK_BASE_URL": self.deepseek_base_url,
+            "GEMINI_API_KEY": self.gemini_api_key,
+            "GEMINI_MODEL": self.gemini_model,
+            "GEMINI_FALLBACK_MODEL": self.gemini_fallback_model,
+            "LLM_CONCURRENCY": self.gemini_concurrency,
+            "GEMINI_CONCURRENCY": self.gemini_concurrency,  # pre-APP-10 name, same value
+            "GEMINI_MAX_RETRIES": self.gemini_max_retries,
+            "RETENTION_DAYS": self.retention_days,
+            "INVITE_CODE": self.invite_code,
+            "DAILY_RESUME_LIMIT": self.daily_resume_limit,
+            "DAILY_AI_CHECK_LIMIT": self.daily_ai_check_limit,
+            "STARTER_SESSION": self.starter_session,
+            "STATS_UTC_OFFSET": self.stats_utc_offset,
+            "TRUSTED_PROXIES": self.trusted_proxies,
+            "SHUTDOWN_TIMEOUT": self.shutdown_timeout,
+            "ADMIN_MFA_REQUIRED": self.admin_mfa_required,
+            "WORKER_MODE": self.worker_mode,
+            "RATE_LIMIT_STORE": self.rate_limit_store,
+            "WORKER_POLL_SECONDS": self.worker_poll_seconds,
+            "STALE_PROCESSING_MINUTES": self.stale_processing_minutes,
+            "BACKUP_OFFSITE_DIR": self.backup_offsite_dir,
+            "BACKUP_KEY": self.backup_key,
+            "BACKUP_RESTORE_URL": self.backup_restore_url,
+            "DATA_KEY": self.data_key,
+            "DATA_KEY_OLD": self.data_key_old,
+            "LOG_FORMAT": self.log_format,
+            "METRICS_TOKEN": self.metrics_token,
+            "SENTRY_DSN": self.sentry_dsn,
+            # Uploads
+            "MAX_FILES_PER_BATCH": 50,
+            "MAX_FILE_BYTES": 5 * 1024 * 1024,
+            "MAX_CONTENT_LENGTH": 60 * 1024 * 1024,
+            # Longer resumes are cut: the tail is rarely useful and costs input tokens.
+            "MAX_RESUME_CHARS": 20_000,
+            # Background jobs run inline when True (tests)
+            "SYNC_JOBS": False,
+            # Cookies
+            "SESSION_COOKIE_HTTPONLY": True,
+            "SESSION_COOKIE_SAMESITE": "Lax",
+            "SESSION_COOKIE_SECURE": self.session_cookie_secure,
+            # UI
+            "LANGUAGES": ("ru", "kk"),
+            "DEFAULT_LANGUAGE": "ru",
+        }
+
+    def report(self) -> list[tuple[str, str]]:
+        """(NAME, value) pairs for `flask config-check`; secrets are shown only as set/unset."""
+        rows = []
+        for f in fields(self):
+            if f.name == "secret_sources":
+                continue
+            name = f.name.upper()
+            value = getattr(self, f.name)
+            if name in ("DATABASE_URL", "BACKUP_RESTORE_URL"):
+                from .services.db import redact_url
+
+                empty = "not set (SQLite file in DATA_DIR)" if name == "DATABASE_URL" else "not set"
+                shown = redact_url(value) if value else empty
+            elif name in SECRET_NAMES:
+                source = self.secret_sources.get(name)
+                shown = ("set" + (f" (from {source})" if source else "")) if value else "not set"
+            elif isinstance(value, tuple):
+                shown = ",".join(value)
+            else:
+                shown = str(value)
+            rows.append((name, shown))
+        return rows
+
+
+class _Reader:
+    """Reads and validates raw values, collecting every problem instead of stopping at the first."""
+
+    def __init__(self, env: Mapping[str, str]) -> None:
+        self.env = env
+        self.problems: list[str] = []
+        self.secret_sources: dict[str, str] = {}
+
+    def text(self, name: str, default: str = "") -> str:
+        return self.env.get(name, default).strip()
+
+    def secret(self, name: str) -> str:
+        path = self.env.get(f"{name}_FILE", "").strip()
+        if not path:
+            return self.env.get(name, "").strip()
+        if self.env.get(name, "").strip():
+            self.problems.append(f"{name} and {name}_FILE are both set; keep one")
+        try:
+            value = Path(path).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            self.problems.append(f"{name}_FILE: cannot read {path} ({exc.strerror or exc})")
+            return ""
+        if not value:
+            self.problems.append(f"{name}_FILE: {path} is empty")
+        self.secret_sources[name] = f"{name}_FILE"
+        return value
+
+    def integer(self, name: str, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+        raw = self.env.get(name, "").strip()
+        if not raw:
+            return default
+        try:
+            value = int(raw)
+        except ValueError:
+            self.problems.append(f"{name}={raw!r} is not a whole number")
+            return default
+        if minimum is not None and value < minimum or maximum is not None and value > maximum:
+            low = "" if minimum is None else f"from {minimum}"
+            high = "" if maximum is None else f"to {maximum}"
+            self.problems.append(f"{name}={value} is out of range (allowed {' '.join(p for p in (low, high) if p)})")
+            return default
+        return value
+
+    def boolean(self, name: str, default: bool) -> bool:
+        raw = self.env.get(name)
+        if raw is None:
+            return default
+        value = raw.strip().lower()
+        if value in _TRUE:
+            return True
+        if value in _FALSE:
+            return False
+        self.problems.append(f"{name}={raw!r} must be 1/0 (or true/false)")
         return default
+
+    def choice(self, name: str, default: str, allowed: tuple[str, ...]) -> str:
+        value = self.text(name, default).lower() or default
+        if value not in allowed:
+            self.problems.append(f"{name}={value!r} must be one of: {', '.join(allowed)}")
+            return default
+        return value
+
+    def networks(self, name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+        raw = self.env.get(name)
+        if raw is None:
+            return default
+        items = tuple(p.strip() for p in raw.split(",") if p.strip())
+        for item in items:
+            try:
+                ipaddress.ip_network(item, strict=False)
+            except ValueError:
+                self.problems.append(f"{name}: {item!r} is not an IP address or network")
+        return items
+
+
+def load_settings(env: Mapping[str, str] | None = None) -> Settings:
+    """Parse and validate settings; raise ConfigError listing every problem."""
+    r = _Reader(os.environ if env is None else env)
+    app_env = r.choice("APP_ENV", "development", ENVIRONMENTS)
+    production = app_env == "production"
+    settings = Settings(
+        app_env=app_env,
+        llm_provider=r.choice("LLM_PROVIDER", "gemini", PROVIDERS),
+        deepseek_api_key=r.secret("DEEPSEEK_API_KEY"),
+        deepseek_model=r.text("DEEPSEEK_MODEL") or "deepseek-flash",
+        deepseek_fallback_model=r.text("DEEPSEEK_FALLBACK_MODEL"),
+        deepseek_base_url=r.text("DEEPSEEK_BASE_URL") or "https://api.deepseek.com",
+        gemini_api_key=r.secret("GEMINI_API_KEY"),
+        gemini_model=r.text("GEMINI_MODEL"),
+        gemini_fallback_model=r.text("GEMINI_FALLBACK_MODEL"),
+        # APP-10: LLM_CONCURRENCY; the old name GEMINI_CONCURRENCY still works when the new one is unset
+        gemini_concurrency=r.integer("LLM_CONCURRENCY" if r.text("LLM_CONCURRENCY") else "GEMINI_CONCURRENCY",
+                                     2, minimum=1, maximum=16),
+        gemini_max_retries=r.integer("GEMINI_MAX_RETRIES", 5, minimum=0, maximum=20),
+        retention_days=r.integer("RETENTION_DAYS", 90, minimum=0),
+        invite_code=r.secret("INVITE_CODE"),
+        daily_resume_limit=r.integer("DAILY_RESUME_LIMIT", 30, minimum=0),
+        daily_ai_check_limit=r.integer("DAILY_AI_CHECK_LIMIT", 20, minimum=0),
+        starter_session=r.boolean("STARTER_SESSION", True),
+        stats_utc_offset=r.integer("STATS_UTC_OFFSET", 5, minimum=-12, maximum=14),
+        trusted_proxies=r.networks("TRUSTED_PROXIES", ("127.0.0.1", "::1")),
+        # Production is served over HTTPS (Cloudflare), so Secure cookies are the default there.
+        session_cookie_secure=r.boolean("SESSION_COOKIE_SECURE", production),
+        flask_secret_key=r.secret("FLASK_SECRET_KEY"),
+        data_dir=r.text("DATA_DIR"),
+        database_url=r.secret("DATABASE_URL"),
+        backup_restore_url=r.secret("BACKUP_RESTORE_URL"),
+        shutdown_timeout=r.integer("SHUTDOWN_TIMEOUT", 25, minimum=0, maximum=600),
+        admin_mfa_required=r.boolean("ADMIN_MFA_REQUIRED", False),
+        worker_mode=r.choice("WORKER_MODE", "inline", ("inline", "external")),
+        rate_limit_store=r.choice("RATE_LIMIT_STORE", "database", ("database", "memory")),
+        worker_poll_seconds=r.integer("WORKER_POLL_SECONDS", 2, minimum=1, maximum=60),
+        stale_processing_minutes=r.integer("STALE_PROCESSING_MINUTES", 15, minimum=2, maximum=24 * 60),
+        backup_offsite_dir=r.text("BACKUP_OFFSITE_DIR"),
+        backup_key=r.secret("BACKUP_KEY"),
+        data_key=r.secret("DATA_KEY"),
+        data_key_old=r.secret("DATA_KEY_OLD"),
+        log_format=r.choice("LOG_FORMAT", "text", ("text", "json")),
+        metrics_token=r.secret("METRICS_TOKEN"),
+        sentry_dsn=r.secret("SENTRY_DSN"),
+        secret_sources=r.secret_sources,
+    )
+
+    if settings.deepseek_base_url and not settings.deepseek_base_url.startswith("https://"):
+        r.problems.append("DEEPSEEK_BASE_URL must start with https://")
+    if settings.database_url and not settings.database_url.startswith(("postgresql://", "postgres://")):
+        r.problems.append("DATABASE_URL must start with postgresql:// (or leave it empty for SQLite)")
+    if settings.backup_restore_url and settings.backup_restore_url == settings.database_url:
+        r.problems.append("BACKUP_RESTORE_URL must be a separate scratch database, never DATABASE_URL (it is wiped)")
+    if settings.backup_key:
+        from .services.backup import BackupError, load_key
+
+        try:
+            load_key(settings.backup_key)
+        except BackupError as exc:
+            r.problems.append(str(exc))
+    if settings.data_key or settings.data_key_old:
+        from .services.fieldcrypt import DataKeyError, parse_key
+
+        for name, values in (("DATA_KEY", [settings.data_key]), ("DATA_KEY_OLD", settings.data_key_old.split(","))):
+            for value in values:
+                try:
+                    if value.strip():
+                        parse_key(value, name)
+                except DataKeyError as exc:
+                    r.problems.append(str(exc))
+        if settings.data_key_old and not settings.data_key:
+            r.problems.append("DATA_KEY_OLD is set without DATA_KEY: put the new key in DATA_KEY")
+    if settings.metrics_token and len(settings.metrics_token) < 24:
+        r.problems.append("METRICS_TOKEN is too short (use at least 24 random characters)")
+    if settings.sentry_dsn and not settings.sentry_dsn.startswith("https://"):
+        r.problems.append("SENTRY_DSN must start with https://")
+    if settings.flask_secret_key and len(settings.flask_secret_key) < 32:
+        r.problems.append("FLASK_SECRET_KEY is too short (use at least 32 characters, e.g. 64 hex digits)")
+    if production:
+        key_name = "DEEPSEEK_API_KEY" if settings.llm_provider == "deepseek" else "GEMINI_API_KEY"
+        if not (settings.deepseek_api_key if settings.llm_provider == "deepseek" else settings.gemini_api_key):
+            r.problems.append(f"{key_name} is required in production (LLM_PROVIDER={settings.llm_provider})")
+        if not settings.session_cookie_secure:
+            r.problems.append("SESSION_COOKIE_SECURE=0 is not allowed in production (the site is served over HTTPS)")
+    if r.problems:
+        raise ConfigError(r.problems)
+    return settings
 
 
 def settings_from_env() -> dict[str, Any]:
-    """Build settings from the current environment (call after load_dotenv)."""
-    return {
-        # AI provider: "gemini" or "deepseek"
-        "LLM_PROVIDER": os.environ.get("LLM_PROVIDER", "gemini").strip().lower(),
-        # DeepSeek (OpenAI-compatible API)
-        "DEEPSEEK_API_KEY": os.environ.get("DEEPSEEK_API_KEY", ""),
-        "DEEPSEEK_MODEL": os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
-        "DEEPSEEK_FALLBACK_MODEL": os.environ.get("DEEPSEEK_FALLBACK_MODEL", ""),
-        "DEEPSEEK_BASE_URL": os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        # Gemini
-        "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
-        "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", ""),
-        "GEMINI_FALLBACK_MODEL": os.environ.get("GEMINI_FALLBACK_MODEL", ""),
-        "GEMINI_CONCURRENCY": max(1, _int_env("GEMINI_CONCURRENCY", 2)),
-        "GEMINI_MAX_RETRIES": max(0, _int_env("GEMINI_MAX_RETRIES", 5)),
-        # R1: sessions untouched for this many days are deleted (0 = keep forever)
-        "RETENTION_DAYS": max(0, _int_env("RETENTION_DAYS", 90)),
-        # S1: sign-up code for /register (empty = only admins create users)
-        "INVITE_CODE": os.environ.get("INVITE_CODE", "").strip(),
-        # S2: default daily resume limit per recruiter until an admin saves another (0 = none)
-        "DAILY_RESUME_LIMIT": max(0, _int_env("DAILY_RESUME_LIMIT", 30)),
-        # QW-02: default daily AI vacancy checks per recruiter until an admin saves another (0 = none)
-        "DAILY_AI_CHECK_LIMIT": max(0, _int_env("DAILY_AI_CHECK_LIMIT", 20)),
-        # S3: give every new user an example session with a Python vacancy
-        "STARTER_SESSION": os.environ.get("STARTER_SESSION", "1") != "0",
-        # S1: hours added to UTC when statistics group events by day (Kazakhstan: +5)
-        "STATS_UTC_OFFSET": _int_env("STATS_UTC_OFFSET", 5),
-        # SIS 10-11 fix: peers allowed to tell the real client IP (CF-Connecting-IP / X-Forwarded-For).
-        # cloudflared runs on the same machine, so the default trusts loopback only;
-        # addresses or networks, e.g. "127.0.0.1,::1,172.16.0.0/12" for docker-compose.
-        "TRUSTED_PROXIES": tuple(p.strip() for p in os.environ.get("TRUSTED_PROXIES", "127.0.0.1,::1").split(",") if p.strip()),
-        # Uploads
-        "MAX_FILES_PER_BATCH": 50,
-        "MAX_FILE_BYTES": 5 * 1024 * 1024,
-        "MAX_CONTENT_LENGTH": 60 * 1024 * 1024,
-        # Longer resumes are cut: the tail is rarely useful and costs input tokens.
-        "MAX_RESUME_CHARS": 20_000,
-        # Background jobs run inline when True (tests)
-        "SYNC_JOBS": False,
-        # Cookies
-        "SESSION_COOKIE_HTTPONLY": True,
-        "SESSION_COOKIE_SAMESITE": "Lax",
-        "SESSION_COOKIE_SECURE": os.environ.get("SESSION_COOKIE_SECURE", "0") == "1",
-        # UI
-        "LANGUAGES": ("ru", "kk"),
-        "DEFAULT_LANGUAGE": "ru",
-    }
+    """Flask config mapping from the current environment (kept for older callers and tests)."""
+    return load_settings().to_flask()
 
 
-def load_secret_key(instance_path: str) -> str:
-    """Return FLASK_SECRET_KEY, or a random key persisted in the instance folder."""
-    key = os.environ.get("FLASK_SECRET_KEY")
-    if key:
-        return key
+def load_secret_key(instance_path: str, production: bool = False) -> str:
+    """The session secret kept in the instance folder, generated on first start.
+
+    In production a missing key is an error: it must come from FLASK_SECRET_KEY(_FILE) or an
+    existing instance/.secret_key, so restarts and replicas never invalidate everyone's login.
+    """
     path = Path(instance_path) / ".secret_key"
     if path.exists():
-        return path.read_text(encoding="utf-8").strip()
+        key = path.read_text(encoding="utf-8").strip()
+        if key:
+            return key
+    if production:
+        raise ConfigError(["FLASK_SECRET_KEY (or FLASK_SECRET_KEY_FILE) is required in production"])
     key = secrets.token_hex(32)
     path.write_text(key, encoding="utf-8")
     return key
+
+
+
+def load_data_keyring(config: Mapping[str, Any], instance_path: str, production: bool = False,
+                      read_only: bool = False):
+    """SEC-02b: the keys of the personal-data columns. DATA_KEY(_FILE) first, then the key
+    kept in <data>/.data_key. Outside production that file is created on first start; in
+    production a missing key is an error (`python -m app.data_key init` creates it once),
+    so replicas and restarts never invent a second key."""
+    from .services.fieldcrypt import KEY_FILE, Keyring, load_key_file
+
+    current = (config.get("DATA_KEY") or "").strip() or load_key_file(
+        instance_path, create=not production and not read_only)
+    if not current and read_only:
+        return None  # backups and checks never create a key; they do not decrypt anything
+    if not current:
+        raise ConfigError([f"DATA_KEY (or DATA_KEY_FILE, or {KEY_FILE} in the data folder) is required in production: "
+                           "create it once with `python -m app.data_key init` and keep a copy in the password manager"])
+    return Keyring.from_values(current, (config.get("DATA_KEY_OLD") or "").split(","))

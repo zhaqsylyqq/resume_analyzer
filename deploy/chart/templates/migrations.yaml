@@ -1,0 +1,43 @@
+{{- if .Values.migrations.enabled }}
+# Schema migrations before the new pods start (pre-install / pre-upgrade hook). The app also
+# migrates at start-up under a PostgreSQL advisory lock, so a skipped hook is not fatal.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "hrscreen.fullname" . }}-migrate
+  labels:
+    {{- include "hrscreen.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "hrscreen.selector" (dict "root" . "component" "migrate") | nindent 8 }}
+    spec:
+      {{- include "hrscreen.pod" (dict "root" . "serviceAccount" "default") | nindent 6 }}
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: {{ include "hrscreen.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["flask", "--app", "app", "db-upgrade"]
+          env:
+            {{- include "hrscreen.configEnv" . | nindent 12 }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secrets.worker }}
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+          securityContext:
+            {{- include "hrscreen.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+{{- end }}

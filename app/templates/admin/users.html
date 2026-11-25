@@ -45,6 +45,7 @@
           </td>
           <td data-label="{{ t('admin.status') }}">
             <span class="badge badge--{{ 'success' if u.active else 'plain' }}">{{ t('admin.active') if u.active else t('admin.inactive') }}</span>
+            {% if u.totp_secret %}<span class="badge badge--info">{{ t('mfa.badge') }}</span>{% endif %}
           </td>
           <td class="num" data-label="{{ t('admin.sessions') }}">{{ u.session_count }}</td>
           <td data-label="{{ t('admin.actions') }}">
@@ -66,6 +67,18 @@
                   <button type="submit" class="btn btn--sm">{{ t('admin.save') }}</button>
                 </form>
               </details>
+              <form method="post" action="{{ url_for('auth.update_user', user_id=u.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="reset_link">
+                <button type="submit" class="btn btn--sm">{{ t('reset.link.create') }}</button>
+              </form>
+              {% if u.totp_secret %}
+              <form method="post" action="{{ url_for('auth.update_user', user_id=u.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="disable_2fa">
+                <button type="submit" class="btn btn--sm btn--danger">{{ t('mfa.admin_disable') }}</button>
+              </form>
+              {% endif %}
             </div>
           </td>
         </tr>

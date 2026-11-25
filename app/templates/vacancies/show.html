@@ -105,6 +105,8 @@
             <td class="ranking__candidate">
               <div class="ranking__name">{{ c.name or c.filename }}</div>
               {% if c.headline %}<div class="muted small">{{ c.headline }}</div>{% endif %}
+              {% if c.injection_suspected %}<div class="mt-1"><span class="badge badge--danger" title="{{ t('rank.injection') }}" data-injection>⚠ {{ t('rank.injection.badge') }}</span></div>
+              <div class="muted small">{{ t('rank.injection') }}</div>{% endif %}
               <div class="muted small">
                 {% if c.experience_years is not none %}{{ t('rank.years', years=c.experience_years | round(1)) }} · {% endif %}{{ c.filename }}
               </div>

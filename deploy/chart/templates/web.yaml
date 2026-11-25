@@ -1,0 +1,80 @@
+{{- $name := include "hrscreen.fullname" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}-web
+  labels:
+    {{- include "hrscreen.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  {{- if not .Values.web.autoscaling.enabled }}
+  replicas: {{ .Values.web.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "hrscreen.selector" (dict "root" . "component" "web") | nindent 6 }}
+  # Rolling update without a gap: a new pod must be ready before an old one goes
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "hrscreen.selector" (dict "root" . "component" "web") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- include "hrscreen.pod" (dict "root" . "tmpSize" "512Mi") | nindent 6 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: web
+          image: {{ include "hrscreen.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["gunicorn", "-c", "python:app.gunicorn_conf", "app:create_app()"]
+          env:
+            - name: WEB_PROCESSES
+              value: {{ .Values.web.processes | quote }}
+            - name: WEB_THREADS
+              value: {{ .Values.web.threads | quote }}
+            - name: PROMETHEUS_MULTIPROC_DIR  # OBS-01: metrics of all gunicorn processes
+              value: /tmp/prometheus
+          envFrom:
+            - configMapRef:
+                name: {{ $name }}-config
+            - secretRef:
+                name: {{ .Values.secrets.web }}
+          ports:
+            - name: http
+              containerPort: 8000
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 60   # first start may run migrations and sealing (up to 2 min)
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}   # 503 while the database is down or the pod stops (APP-08)
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          lifecycle:
+            preStop:
+              # let every node drop this pod from the Service before gunicorn stops taking requests
+              # (5 s lost 1 request in 806 in the kind test: endpoint updates can take longer)
+              exec: {command: ["sleep", "10"]}
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+          securityContext:
+            {{- include "hrscreen.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp

@@ -140,6 +140,24 @@ def _txt_text(data: bytes) -> str:
 _EXTRACTORS = {".pdf": _pdf_text, ".docx": _docx_text, ".txt": _txt_text}
 
 
+def precheck(filename: str | None, data: bytes, *, max_bytes: int) -> ParsedFile:
+    """APP-05: the cheap checks of parse_file (type, size, empty) without extracting the text.
+
+    The web process runs these while the user waits; a worker extracts the text later. An ok
+    result has an empty `text`.
+    """
+    name = display_name(filename)
+    digest = hashlib.sha256(data).hexdigest()
+    extension = PurePath(name).suffix.lower()
+    if extension not in _EXTRACTORS:
+        return ParsedFile(name, digest, error=UNSUPPORTED)
+    if len(data) > max_bytes:
+        return ParsedFile(name, digest, error=TOO_LARGE)
+    if not data.strip():
+        return ParsedFile(name, digest, error=EMPTY)
+    return ParsedFile(name, digest, text="")
+
+
 def parse_file(filename: str | None, data: bytes, *, max_bytes: int, max_chars: int) -> ParsedFile:
     name = display_name(filename)
     digest = hashlib.sha256(data).hexdigest()

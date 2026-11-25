@@ -68,6 +68,9 @@ class CandidateProfile(BaseModel):
     certifications: list[str] = Field(default_factory=list)
     resume_language: Literal["ru", "kk", "en", "other"] = "other"
     demographics: Demographics = Field(default_factory=Demographics)
+    # SEC-04: names of prompt-injection patterns found in the resume (services/injection.py).
+    # Set locally, never by the AI; [] for a clean resume and for profiles saved before SEC-04.
+    injection_signals: list[str] = Field(default_factory=list)
 
 
 Verdict = Literal["strong", "good", "partial", "weak"]

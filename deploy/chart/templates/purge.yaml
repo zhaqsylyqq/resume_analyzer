@@ -1,0 +1,43 @@
+{{- if .Values.purge.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "hrscreen.fullname" . }}-purge
+  labels:
+    {{- include "hrscreen.labels" . | nindent 4 }}
+    app.kubernetes.io/component: purge
+spec:
+  schedule: {{ .Values.purge.schedule | quote }}
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            {{- include "hrscreen.selector" (dict "root" . "component" "purge") | nindent 12 }}
+        spec:
+          {{- include "hrscreen.pod" (dict "root" .) | nindent 10 }}
+          restartPolicy: Never
+          containers:
+            - name: purge
+              image: {{ include "hrscreen.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["flask", "--app", "app", "purge-old"]
+              envFrom:
+                - configMapRef:
+                    name: {{ include "hrscreen.fullname" . }}-config
+                - secretRef:
+                    name: {{ .Values.secrets.worker }}
+              resources:
+                {{- toYaml .Values.purge.resources | nindent 16 }}
+              securityContext:
+                {{- include "hrscreen.containerSecurity" . | nindent 16 }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+{{- end }}

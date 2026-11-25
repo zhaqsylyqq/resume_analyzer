@@ -14,7 +14,7 @@ from typing import Any
 import openai
 from pydantic import BaseModel
 
-from .gemini import ProviderError, record_usage
+from .llm import ProviderError, record_usage
 
 JSON_INSTRUCTION = (
     "\n\nOutput format: reply with one json object only, without markdown fences or any other "

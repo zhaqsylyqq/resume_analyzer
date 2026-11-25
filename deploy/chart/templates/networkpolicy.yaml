@@ -1,0 +1,122 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy -}}
+{{- $name := include "hrscreen.fullname" . -}}
+# INF-06: nothing in or out of this namespace unless a rule below allows it (T-12)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}-default-deny
+  labels:
+    {{- include "hrscreen.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Every pod of the app may resolve names
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}-dns
+  labels:
+    {{- include "hrscreen.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.dns.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $np.dns.podLabels | nindent 14 }}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# Every pod of the app (web, worker, migration and clean-up jobs) may reach the database
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}-database
+  labels:
+    {{- include "hrscreen.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        {{- toYaml $np.database.to | nindent 8 }}
+      ports:
+        - {protocol: TCP, port: {{ $np.database.port }}}
+---
+# Web: in from the ingress path and from monitoring; no other inbound
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}-web-in
+  labels:
+    {{- include "hrscreen.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "hrscreen.selector" (dict "root" . "component" "web") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- with $np.webFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ $np.monitoringNamespace }}}}
+      ports:
+        - {protocol: TCP, port: 8000}
+---
+# Worker: no inbound except monitoring on the metrics port
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}-worker-in
+  labels:
+    {{- include "hrscreen.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "hrscreen.selector" (dict "root" . "component" "worker") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ $np.monitoringNamespace }}}}
+      ports:
+        - {protocol: TCP, port: {{ .Values.worker.metricsPort }}}
+---
+# Outbound HTTPS to the AI provider: public addresses only, never the private network,
+# the cluster or the cloud metadata service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}-ai
+  labels:
+    {{- include "hrscreen.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/instance
+        operator: In
+        values: [{{ .Release.Name | quote }}]
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [worker{{ if $np.webCallsAI }}, web{{ end }}]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml $np.privateRanges | nindent 14 }}
+      ports:
+        - {protocol: TCP, port: {{ $np.aiPort }}}
+{{- end }}

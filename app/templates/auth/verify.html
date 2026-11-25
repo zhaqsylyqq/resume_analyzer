@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ t('mfa.verify.title') }}{% endblock %}
+{% block content %}
+<div class="auth">
+  <section class="card auth__card">
+    <h1>{{ t('mfa.verify.title') }}</h1>
+    <p class="muted">{{ t('mfa.verify.lead') }}</p>
+    {% if error %}
+      <div class="alert alert--danger mb-4" role="alert"><p>{{ t(error) }}</p></div>
+    {% endif %}
+    <form method="post" action="{{ url_for('auth.login_verify') }}" class="stack" novalidate>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field">
+        <label class="label" for="code">{{ t('mfa.code') }}</label>
+        <input class="input mono" id="code" name="code" required autocomplete="one-time-code" inputmode="text"
+               autocapitalize="none" spellcheck="false" maxlength="20" autofocus>
+        <span class="hint">{{ t('mfa.verify.hint') }}</span>
+      </div>
+      <button type="submit" class="btn btn--primary btn--block">{{ t('auth.submit') }}</button>
+    </form>
+    <p class="hint mt-4 mb-0"><a href="{{ url_for('auth.login') }}">{{ t('mfa.verify.back') }}</a></p>
+  </section>
+</div>
+{% endblock %}

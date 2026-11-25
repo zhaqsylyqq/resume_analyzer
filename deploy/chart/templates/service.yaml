@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hrscreen.fullname" . }}
+  labels:
+    {{- include "hrscreen.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "hrscreen.selector" (dict "root" . "component" "web") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+---
+# Workers have no HTTP pages; this headless Service lets Prometheus find their metrics (OBS-02)
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hrscreen.fullname" . }}-worker-metrics
+  labels:
+    {{- include "hrscreen.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  clusterIP: None
+  selector:
+    {{- include "hrscreen.selector" (dict "root" . "component" "worker") | nindent 4 }}
+  ports:
+    - name: metrics
+      port: {{ .Values.worker.metricsPort }}
+      targetPort: metrics

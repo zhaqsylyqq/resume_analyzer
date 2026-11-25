@@ -6,8 +6,9 @@ from typing import Any
 
 from flask import Blueprint, abort, current_app, g, jsonify, redirect, render_template, request, url_for
 
-from ..auth import can_access, owner_filter
 from ..i18n import get_locale, translate
+from ..policy import can_access, deny, owner_filter
+from ..ratelimits import rate_limited
 from ..services import bias, jobs, storage
 
 bp = Blueprint("sessions", __name__, url_prefix="/sessions")
@@ -21,8 +22,10 @@ MAX_VACANCY_TEXT = 20_000
 def load_session_or_404(session_id: int):
     """The session if the signed-in user may see it; 404 otherwise (never 403: no hints)."""
     session = storage.get_session(storage.get_db(), session_id)
-    if session is None or not can_access(session):
+    if session is None:
         abort(404)
+    if not can_access(session):
+        deny(session_id)  # SEC-03: logged as access_denied
     return session
 
 
@@ -67,6 +70,7 @@ def new():
 
 
 @bp.post("")
+@rate_limited("work", 20, 60)
 def create():
     title = request.form.get("title", "").strip()
     language = request.form.get("language", get_locale())
@@ -129,7 +133,7 @@ def _eta(db, session_id: int) -> dict[str, Any] | None:
     """Q1: time remaining as seconds plus a localized label; None when idle."""
     if not jobs.is_running(session_id):
         return None
-    seconds = jobs.eta_seconds(db, session_id, current_app.config["GEMINI_CONCURRENCY"])
+    seconds = jobs.eta_seconds(db, session_id, current_app.config["LLM_CONCURRENCY"])
     if seconds is None:
         return {"seconds": None, "label": translate("eta.estimating")}
     minutes = -(-seconds // 60)  # round up

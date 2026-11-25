@@ -57,6 +57,12 @@ def _set_headers(response):
     headers.setdefault("Referrer-Policy", "same-origin")
     headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    # SEC-04 (OWASP ZAP 90004): with COOP these isolate the site from other origins' pages.
+    headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+    headers.setdefault("Cross-Origin-Embedder-Policy", "require-corp")
+    if request.endpoint != "static":
+        # SEC-04: pages and downloads carry personal data; no browser or proxy may keep a copy.
+        headers.setdefault("Cache-Control", "no-store")
     if request.is_secure:
         headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response

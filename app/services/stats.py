@@ -7,7 +7,6 @@ retention purge still count. Dates are grouped in local time (`STATS_UTC_OFFSET`
 from __future__ import annotations
 
 import io
-import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
@@ -16,6 +15,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from .db import Database, sql_local_day
 from .export import _set_text_types, _text
 
 PERIODS = (7, 30)
@@ -41,19 +41,19 @@ class Period:
     def where(self, column: str = "created_at") -> tuple[str, tuple]:
         return ("", ()) if self.since is None else (f" AND {column} >= ?", (self.since,))
 
-    def local_day(self, column: str) -> str:
-        return f"date({column}, '{self.utc_offset:+d} hours')"
+    def local_day(self, column: str, dialect: str = "sqlite") -> str:
+        return sql_local_day(dialect, column, self.utc_offset)
 
 
 def make_period(days: int | None, utc_offset: int, now: datetime | None = None) -> Period:
     return Period(days if days in PERIODS else None, utc_offset, now or datetime.now(timezone.utc))
 
 
-def _count(db: sqlite3.Connection, sql: str, params: tuple) -> int:
+def _count(db: Database, sql: str, params: tuple) -> int:
     return int(db.execute(sql, params).fetchone()[0] or 0)
 
 
-def summary(db: sqlite3.Connection, period: Period) -> dict[str, int]:
+def summary(db: Database, period: Period) -> dict[str, int]:
     w, p = period.where()
     wa, pa = period.where("analyzed_at")
     return {
@@ -68,18 +68,18 @@ def summary(db: sqlite3.Connection, period: Period) -> dict[str, int]:
     }
 
 
-def daily(db: sqlite3.Connection, period: Period) -> list[dict[str, Any]]:
+def daily(db: Database, period: Period) -> list[dict[str, Any]]:
     """One row per local day from the first event (or the period start) to today."""
     w, p = period.where()
-    day = period.local_day("created_at")
+    day = period.local_day("created_at", db.dialect)
     rows = db.execute(
         f"""
         SELECT {day} AS day,
                COUNT(DISTINCT CASE WHEN action = 'login' THEN user_id END) AS users,
-               SUM(action = 'login') AS logins,
-               SUM(action = 'session_create') AS sessions,
-               SUM(action = 'export') AS exports,
-               SUM(action = 'register') AS registrations
+               SUM(CASE WHEN action = 'login' THEN 1 ELSE 0 END) AS logins,
+               SUM(CASE WHEN action = 'session_create' THEN 1 ELSE 0 END) AS sessions,
+               SUM(CASE WHEN action = 'export' THEN 1 ELSE 0 END) AS exports,
+               SUM(CASE WHEN action = 'register' THEN 1 ELSE 0 END) AS registrations
         FROM audit_log WHERE 1=1{w} GROUP BY day
         """,
         p,
@@ -102,7 +102,7 @@ def daily(db: sqlite3.Connection, period: Period) -> list[dict[str, Any]]:
     return out
 
 
-def per_user(db: sqlite3.Connection, period: Period) -> list[dict[str, Any]]:
+def per_user(db: Database, period: Period) -> list[dict[str, Any]]:
     w, p = period.where("a.created_at")
     wa, pa = period.where("r.analyzed_at")
     rows = db.execute(
@@ -115,19 +115,19 @@ def per_user(db: sqlite3.Connection, period: Period) -> list[dict[str, Any]]:
                (SELECT COUNT(*) FROM audit_log a WHERE a.user_id = u.id AND a.action = 'export'{w}) AS exports,
                (SELECT COUNT(*) FROM resumes r JOIN sessions s ON s.id = r.session_id
                  WHERE s.owner_id = u.id AND r.status = 'done'{wa}) AS resumes
-        FROM users u ORDER BY logins DESC, u.username COLLATE NOCASE
+        FROM users u ORDER BY logins DESC, lower(u.username)
         """,
         p * 5 + pa,
     ).fetchall()
     return [dict(r) for r in rows]
 
 
-def audit_rows(db: sqlite3.Connection, period: Period) -> list[sqlite3.Row]:
+def audit_rows(db: Database, period: Period) -> list[Any]:
     w, p = period.where()
     return db.execute(f"SELECT * FROM audit_log WHERE 1=1{w} ORDER BY created_at, id", p).fetchall()
 
 
-def report(db: sqlite3.Connection, period: Period) -> dict[str, Any]:
+def report(db: Database, period: Period) -> dict[str, Any]:
     days = daily(db, period)
     chart = days[-CHART_DAYS:]
     peak = max([d["users"] for d in chart] + [d["sessions"] for d in chart] + [1])
@@ -144,7 +144,7 @@ def _local(value: str | None, offset: int) -> str:
     return moment.strftime("%Y-%m-%d %H:%M")
 
 
-def to_xlsx(db: sqlite3.Connection, period: Period, t: Callable[..., str]) -> bytes:
+def to_xlsx(db: Database, period: Period, t: Callable[..., str]) -> bytes:
     data = report(db, period)
     wb = Workbook()
     head_font, head_fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor=BRAND)

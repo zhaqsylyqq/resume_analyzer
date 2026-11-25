@@ -9,11 +9,13 @@ from urllib.parse import quote
 
 from flask import Blueprint, Response, abort, current_app, flash, g, jsonify, redirect, render_template, request, url_for
 
-from ..auth import current_settings, is_admin
 from ..i18n import get_locale, translate
+from ..policy import is_admin
+from ..ratelimits import rate_limited
 from ..services import bias, diversity, jobs, scoring, storage
 from ..services import export as exporter
-from ..services.gemini import GeminiError, get_gemini
+from ..services.llm import GeminiError, get_llm
+from ..settings import current as current_settings
 from .screening import start_analysis
 from .sessions import MAX_VACANCIES, MAX_VACANCY_TEXT, load_session_or_404, validate_vacancy
 
@@ -30,7 +32,7 @@ def _load(session_id: int, vacancy_id: int):
 
 def _gemini_or_none():
     try:
-        return get_gemini()
+        return get_llm()
     except GeminiError:
         return None
 
@@ -169,6 +171,7 @@ def set_status(session_id: int, vacancy_id: int, resume_id: int):
 
 
 @bp.post("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/bias")
+@rate_limited("ai-check", 10, 60)
 def recheck_bias(session_id: int, vacancy_id: int):
     session, vacancy = _load(session_id, vacancy_id)
     report, limited = _bias_check(vacancy["text"], session["language"])
@@ -182,6 +185,7 @@ def recheck_bias(session_id: int, vacancy_id: int):
 
 
 @bp.post("/vacancies/bias-check")
+@rate_limited("ai-check", 10, 60)
 def bias_check():
     """Check draft vacancy text from the new-session form (JSON in, JSON out)."""
     payload = request.get_json(silent=True) or {}
@@ -231,12 +235,14 @@ def _shortlist(session_id: int, vacancy_id: int):
 
 
 @bp.get("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/export.csv")
+@rate_limited("export", 30, 60)
 def export(session_id: int, vacancy_id: int):
     *_, shortlist, stem = _shortlist(session_id, vacancy_id)
     return _download(scoring.to_csv(shortlist, translate), stem, "csv", session_id, vacancy_id)
 
 
 @bp.get("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/export.xlsx")
+@rate_limited("export", 30, 60)
 def export_xlsx(session_id: int, vacancy_id: int):
     session, vacancy, _top, ranked, shortlist, stem = _shortlist(session_id, vacancy_id)
     sheet = exporter.VacancySheet(vacancy["title"], shortlist, len(ranked))
@@ -244,6 +250,7 @@ def export_xlsx(session_id: int, vacancy_id: int):
 
 
 @bp.get("/sessions/<int:session_id>/vacancies/<int:vacancy_id>/export.pdf")
+@rate_limited("export", 30, 60)
 def export_pdf(session_id: int, vacancy_id: int):
     session, vacancy, top, ranked, shortlist, stem = _shortlist(session_id, vacancy_id)
     data = exporter.to_pdf(session["title"], vacancy["title"], shortlist, len(ranked), top, translate)
@@ -251,6 +258,7 @@ def export_pdf(session_id: int, vacancy_id: int):
 
 
 @bp.get("/sessions/<int:session_id>/export.xlsx")
+@rate_limited("export", 30, 60)
 def export_session_xlsx(session_id: int):
     """Whole session: one sheet per vacancy with its Top-N (default Top-10, ties kept)."""
     session = load_session_or_404(session_id)

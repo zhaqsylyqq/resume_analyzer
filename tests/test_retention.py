@@ -104,7 +104,7 @@ def test_retention_setting_from_environment(monkeypatch):
 
     monkeypatch.setenv("RETENTION_DAYS", "30")
     assert settings_from_env()["RETENTION_DAYS"] == 30
-    monkeypatch.setenv("RETENTION_DAYS", "-5")
+    monkeypatch.setenv("RETENTION_DAYS", "0")
     assert settings_from_env()["RETENTION_DAYS"] == 0
     monkeypatch.delenv("RETENTION_DAYS")
     assert settings_from_env()["RETENTION_DAYS"] == 90
@@ -119,6 +119,7 @@ def live_db(app):
     return Path(app.config["DATABASE"])
 
 
+@pytest.mark.sqlite_only
 def test_backup_is_consistent_while_another_connection_writes(live_db, tmp_path):
     writer = storage.connect(str(live_db))  # WAL mode, uncommitted transaction open
     writer.execute("BEGIN")
@@ -134,6 +135,7 @@ def test_backup_is_consistent_while_another_connection_writes(live_db, tmp_path)
     copy.close()
 
 
+@pytest.mark.sqlite_only
 def test_backup_rotation_keeps_the_newest(live_db, tmp_path):
     out = tmp_path / "out"
     made = [backup_db.backup(live_db, out, keep=3, now=datetime(2026, 11, d, 3, 0, 0)) for d in range(1, 6)]
@@ -150,6 +152,7 @@ def test_backup_cli_reports_missing_database(tmp_path, capsys):
     assert not (tmp_path / "out").exists()
 
 
+@pytest.mark.sqlite_only
 def test_backup_cli_success(live_db, tmp_path, capsys):
     assert backup_db.main(["--db", str(live_db), "--out", str(tmp_path / "b"), "--keep", "2"]) == 0
     assert "Backup written:" in capsys.readouterr().out

@@ -1,0 +1,289 @@
+name: Helm chart
+
+# INF-05. Lint and schema-check the chart for every environment, then install it into a
+# throw-away kind cluster in a namespace that enforces Pod Security "restricted": web and
+# worker must start (read-only root, non-root, no capabilities), the migration hook must run,
+# /metrics must stay closed to forwarded requests, and a rolling update under steady traffic
+# must answer every request (no 5xx, no refused connection).
+
+on:
+  pull_request:
+    paths: ["deploy/**", ".sops.yaml", "scripts/secrets.sh", "scripts/check_secrets.py", ".github/workflows/chart.yml", "Dockerfile", "app/gunicorn_conf.py"]
+  push:
+    branches: [main]
+    paths: ["deploy/**", ".sops.yaml", "scripts/secrets.sh", "scripts/check_secrets.py", ".github/workflows/chart.yml", "Dockerfile", "app/gunicorn_conf.py"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chart-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KUBECONFORM_VERSION: v0.7.0
+  KUBECONFORM_SHA256: c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3
+  SOPS_VERSION: v3.13.3
+  SOPS_SHA256: e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
+  AGE_VERSION: v1.3.2
+  AGE_SHA256: cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
+  KYVERNO_VERSION: v1.19.2
+  KYVERNO_CLI_SHA256: 357eaf1df8bc24ddd5a73979fadeaae6a032e8710f11af264229756e4956bf4a
+  KYVERNO_CHART: 3.9.2
+  K8S_VERSION: 1.34.0
+  # same PostgreSQL as compose and CI, by digest
+  POSTGRES_IMAGE: postgres:16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
+  # the Dockerfile's base image, as a plain web server for the network test
+  PYTHON_IMAGE: python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+
+jobs:
+  chart:
+    name: Lint, schemas, install in kind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v3.19.0
+
+      - name: kubeconform
+        run: |
+          curl -sSfLo /tmp/kc.tgz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  /tmp/kc.tgz" | sha256sum -c -
+          tar -xzf /tmp/kc.tgz -C /usr/local/bin kubeconform
+
+      - name: sops and age (INF-07)
+        run: |
+          curl -sSfLo /tmp/sops "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.amd64"
+          echo "${SOPS_SHA256}  /tmp/sops" | sha256sum -c -
+          sudo install -m 0755 /tmp/sops /usr/local/bin/sops
+          curl -sSfLo /tmp/age.tgz "https://github.com/FiloSottile/age/releases/download/${AGE_VERSION}/age-${AGE_VERSION}-linux-amd64.tar.gz"
+          echo "${AGE_SHA256}  /tmp/age.tgz" | sha256sum -c -
+          tar -xzf /tmp/age.tgz -C /tmp && sudo install -m 0755 /tmp/age/age /tmp/age/age-keygen /usr/local/bin/
+
+      - name: Kyverno policies offline (CD-03)
+        run: |
+          set -euo pipefail
+          curl -sSfLo /tmp/kyv.tgz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          echo "${KYVERNO_CLI_SHA256}  /tmp/kyv.tgz" | sha256sum -c -
+          tar -xzf /tmp/kyv.tgz -C /tmp kyverno && sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
+          kyverno test deploy/platform/policies/tests
+          # the chart itself must pass every policy (by digest, with requests and limits)
+          helm template hrscreen deploy/chart -f deploy/envs/prod/values.yaml \
+            --set image.digest="sha256:$(printf '1%.0s' $(seq 64))" \
+            | sed 's/^metadata:$/metadata:\n  namespace: hrscreen/' > /tmp/rendered.yaml
+          out=$(kyverno apply deploy/platform/policies/restrict-image-registries.yaml \
+            deploy/platform/policies/disallow-latest-tag.yaml deploy/platform/policies/require-requests-limits.yaml \
+            deploy/platform/policies/disallow-host-access.yaml --resource /tmp/rendered.yaml)
+          echo "$out" | tail -3
+          echo "$out" | grep -Eq "pass: [1-9][0-9]*, fail: 0, warn: 0, error: 0"
+
+      - name: Committed secrets are encrypted (INF-07)
+        run: scripts/secrets.sh check
+
+      - name: helm lint and kubeconform (prod, staging, every switch on)
+        run: |
+          set -euo pipefail
+          digest="sha256:$(printf 'a%.0s' $(seq 64))"
+          for env in prod staging; do
+            helm lint deploy/chart -f "deploy/envs/$env/values.yaml" --set image.digest="$digest" --strict
+            helm template hrscreen deploy/chart -n hrscreen -f "deploy/envs/$env/values.yaml" --set image.digest="$digest" \
+              | kubeconform -strict -summary -kubernetes-version "$K8S_VERSION"
+          done
+          helm template hrscreen deploy/chart --set image.digest="$digest" --set web.autoscaling.enabled=true \
+            --set ingress.enabled=true --set ingress.host=staging.example \
+            | kubeconform -strict -summary -kubernetes-version "$K8S_VERSION"
+          if helm template hrscreen deploy/chart >/dev/null 2>&1; then
+            echo "::error::the chart rendered without an image digest"; exit 1
+          fi
+
+      - name: Build the image for the test cluster
+        run: docker build -t local/hrscreen:ci --build-arg VERSION=ci --build-arg REVISION="$GITHUB_SHA" .
+
+      - uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          version: v0.30.0
+          cluster_name: hrscreen
+          wait: 120s
+
+      - name: Cluster for the test (PostgreSQL, restricted namespace, secrets)
+        run: |
+          set -euo pipefail
+          kind load docker-image local/hrscreen:ci --name hrscreen
+          kubectl create namespace db
+          kubectl -n db create deployment pg --image="$POSTGRES_IMAGE" --port=5432
+          kubectl -n db set env deployment/pg POSTGRES_PASSWORD=ci-only POSTGRES_DB=hrscreen
+          kubectl -n db expose deployment pg --port=5432
+          kubectl -n db rollout status deployment/pg --timeout=120s
+          kubectl create namespace monitoring   # stands in for Prometheus: allowed to read web and worker
+          # INF-06: a decoy HTTP server on 443 at a private (pod) address, in a namespace of its own
+          kubectl create namespace other
+          kubectl -n other run decoy --image="$PYTHON_IMAGE" --port=443 -- python -m http.server 443
+          kubectl create namespace hrscreen
+          kubectl label namespace hrscreen pod-security.kubernetes.io/enforce=restricted \
+            pod-security.kubernetes.io/enforce-version=latest
+          # INF-07 path end to end: fill the template, encrypt with a throw-away age key outside
+          # the repository, decrypt and apply - the way scripts/secrets.sh apply does on a server
+          work=$(mktemp -d)
+          age-keygen -o "$work/key.txt" 2>/dev/null
+          sed -e "s|64 hex characters: openssl rand -hex 32|$(openssl rand -hex 32)|" \
+              -e "s|the same value as in hrscreen-web|SAME|" \
+              -e "s|32 bytes in base64: openssl rand -base64 32 (the SAME as the worker's)|DATAKEY|" \
+              -e "s|postgresql://hrscreen:<password>@<db host>:5432/hrscreen|postgresql://postgres:ci-only@pg.db.svc:5432/hrscreen|" \
+              -e "s|sk-\.\.\.|sk-ci-not-a-real-key|" deploy/secrets/secrets.example.yaml > "$work/plain.yaml"
+          secret_key=$(grep -m1 FLASK_SECRET_KEY "$work/plain.yaml" | sed 's/.*: "\(.*\)"/\1/')
+          sed -i -e "s|DATAKEY|$(openssl rand -base64 32)|" "$work/plain.yaml"
+          data_key=$(grep -m1 DATA_KEY "$work/plain.yaml" | sed 's/.*: "\(.*\)"/\1/')
+          sed -i -e "/FLASK_SECRET_KEY/s|SAME|$secret_key|" -e "/DATA_KEY/s|SAME|$data_key|" \
+                 -e "/DATABASE_URL/s|SAME|postgresql://postgres:ci-only@pg.db.svc:5432/hrscreen|" "$work/plain.yaml"
+          (cd "$work" && sops --encrypt --age "$(age-keygen -y key.txt)" --encrypted-regex '^(data|stringData)$' \
+             --input-type yaml --output-type yaml plain.yaml > secrets.enc.yaml)
+          rm "$work/plain.yaml"
+          python3 scripts/check_secrets.py "$work/secrets.enc.yaml"
+          SOPS_AGE_KEY_FILE="$work/key.txt" sops --decrypt "$work/secrets.enc.yaml" | kubectl apply -n hrscreen -f -
+          kubectl -n hrscreen get secrets
+          # INF-06: the test database lives in namespace db; web gets no outbound HTTPS here,
+          # so the policy can be checked to the letter of the DoD ("web cannot reach the internet")
+          cat > /tmp/ci-values.yaml <<'YAML'
+          image: {repository: local/hrscreen, tag: ci, pullPolicy: Never}
+          networkPolicy:
+            webCallsAI: false
+            database:
+              to:
+                - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: db}}
+                  podSelector: {matchLabels: {app: pg}}
+          YAML
+          for i in $(seq 30); do
+            kubectl -n db exec deploy/pg -- pg_isready -U postgres && break; sleep 2
+          done
+
+      - name: Install (migration hook, web x2, worker) under Pod Security "restricted"
+        run: |
+          set -euo pipefail
+          helm upgrade --install hrscreen deploy/chart -n hrscreen -f deploy/envs/prod/values.yaml \
+            -f /tmp/ci-values.yaml --wait --timeout 5m
+          kubectl -n hrscreen get networkpolicy
+          kubectl -n hrscreen get pods -o wide
+          kubectl -n hrscreen rollout status deploy/hrscreen-web --timeout=60s
+          kubectl -n hrscreen rollout status deploy/hrscreen-worker --timeout=60s
+          # each workload reads only its own Secret (INF-07)
+          test "$(kubectl -n hrscreen get deploy hrscreen-web -o jsonpath='{.spec.template.spec.containers[0].envFrom[1].secretRef.name}')" = hrscreen-web
+          test "$(kubectl -n hrscreen get deploy hrscreen-worker -o jsonpath='{.spec.template.spec.containers[0].envFrom[1].secretRef.name}')" = hrscreen-worker
+
+      - name: Pages, metrics and their protection from inside the cluster
+        run: |
+          set -euo pipefail
+          run() { kubectl run "probe-$1" -n monitoring --rm -i --restart=Never --quiet --image=curlimages/curl:8.11.1 -- sh -c "$2"; }
+          run health 'curl -fsS http://hrscreen.hrscreen.svc:8000/readyz'
+          run metrics 'curl -fsS http://hrscreen.hrscreen.svc:8000/metrics | grep -q "^hrscreen_database_up 1.0" && echo metrics-ok'
+          code=$(run cf 'curl -s -o /dev/null -w %{http_code} -H "CF-Connecting-IP: 203.0.113.9" http://hrscreen.hrscreen.svc:8000/metrics')
+          test "$code" = "404" || { echo "::error::/metrics answered $code to a request from Cloudflare"; exit 1; }
+          run worker 'curl -fsS http://hrscreen-worker-metrics.hrscreen.svc:9101/metrics | grep -q "^process_" && echo worker-metrics-ok'
+
+      - name: Network policy matrix (INF-06)
+        run: |
+          set -euo pipefail
+          # can <pod> open TCP <host> <port>?  (python is in the image; 4 s timeout)
+          reach() { kubectl -n hrscreen exec "deploy/hrscreen-$1" -- python -c \
+            "import socket,sys; socket.create_connection((sys.argv[1], int(sys.argv[2])), 4)" "$2" "$3" >/dev/null 2>&1; }
+          expect() { # expect allowed|denied <what> <command...>
+            want=$1; what=$2; shift 2
+            if "$@"; then got=allowed; else got=denied; fi
+            echo "$what: $got"; echo "| $what | $want | $got |" >> "$GITHUB_STEP_SUMMARY"
+            [ "$got" = "$want" ] || { echo "::error::$what: expected $want, got $got"; exit 1; }
+          }
+          echo "| Path | Expected | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          kubectl -n other wait --for=condition=Ready pod/decoy --timeout=120s
+          decoy=$(kubectl -n other get pod decoy -o jsonpath='{.status.podIP}')
+          monitor() { kubectl run "mon-$RANDOM" -n monitoring --rm -i --restart=Never --quiet \
+            --image=curlimages/curl:8.11.1 -- curl -s -m 4 -o /dev/null "$1"; }
+          web=$(kubectl -n hrscreen get svc hrscreen -o jsonpath='{.spec.clusterIP}')
+          expect allowed "worker -> internet :443 (AI API)"  reach worker 1.1.1.1 443
+          expect denied  "worker -> internet :80"            reach worker 1.1.1.1 80
+          expect allowed "control: monitoring -> decoy :443" monitor "http://$decoy:443/"
+          expect denied  "worker -> private address :443"    reach worker "$decoy" 443
+          expect denied  "worker -> web :8000"               reach worker "$web" 8000
+          expect allowed "worker -> database"                reach worker pg.db.svc 5432
+          expect denied  "web -> internet :443"              reach web 1.1.1.1 443
+          expect allowed "web -> database"                   reach web pg.db.svc 5432
+          outsider() { kubectl run "outsider-$RANDOM" -n default --rm -i --restart=Never --quiet \
+            --image=curlimages/curl:8.11.1 -- curl -s -m 4 -o /dev/null "http://hrscreen.hrscreen.svc:8000/healthz"; }
+          expect denied  "pod in another namespace -> web"   outsider
+
+      - name: Rolling update under steady traffic - no server errors
+        run: |
+          set -euo pipefail
+          # every 0.1 s for 100 s: HTTP code + curl's exit code for anything but 200
+          kubectl run load -n monitoring --restart=Never --image=curlimages/curl:8.11.1 -- sh -c '
+            ok=0; e5=0; conn=0; end=$(( $(date +%s) + 100 ))
+            while [ $(date +%s) -lt $end ]; do
+              c=$(curl -s -o /dev/null -m 3 -w "%{http_code}" http://hrscreen.hrscreen.svc:8000/login); rc=$?
+              case "$c" in
+                200) ok=$((ok+1)) ;;
+                5*) e5=$((e5+1)); echo "$(date +%T) http $c" ;;
+                *) conn=$((conn+1)); echo "$(date +%T) no answer (curl exit $rc)" ;;
+              esac
+              sleep 0.1
+            done
+            echo "RESULT ok=$ok e5xx=$e5 conn=$conn"'
+          kubectl wait -n monitoring --for=condition=Ready pod/load --timeout=60s
+          sleep 10
+          helm upgrade hrscreen deploy/chart -n hrscreen -f deploy/envs/prod/values.yaml -f /tmp/ci-values.yaml \
+            --set-string podAnnotations.rollout="$GITHUB_RUN_ID" --wait --timeout 5m
+          kubectl wait -n monitoring --for=jsonpath='{.status.phase}'=Succeeded pod/load --timeout=180s
+          kubectl logs -n monitoring load | tail -5
+          result=$(kubectl logs -n monitoring load | grep RESULT)
+          echo "Rolling update: $result" >> "$GITHUB_STEP_SUMMARY"
+          # DoD (plan, INF-05): no 5xx during a rolling update. A request the network loses on
+          # the way (curl gets no answer at all) is counted separately and may be at most 0.5 %
+          # (the availability SLO); two kind runs each lost 1 of ~850 that way.
+          ok=$(echo "$result" | sed 's/.*ok=\([0-9]*\).*/\1/'); e5=$(echo "$result" | sed 's/.*e5xx=\([0-9]*\).*/\1/')
+          conn=$(echo "$result" | sed 's/.*conn=\([0-9]*\).*/\1/')
+          [ "$e5" = 0 ] || { echo "::error::$e5 server errors (5xx) during the rolling update"; exit 1; }
+          [ $(( conn * 200 )) -le $(( ok + conn )) ] || { echo "::error::$conn of $((ok + conn)) requests got no answer (over 0.5 %)"; exit 1; }
+          [ "$conn" = 0 ] || echo "::warning::$conn request(s) got no answer during the rolling update (within 0.5 %)"
+
+      - name: Kyverno in the cluster refuses foreign, unpinned and unsigned images (CD-03)
+        run: |
+          set -euo pipefail
+          helm repo add kyverno https://kyverno.github.io/kyverno/ >/dev/null
+          helm install kyverno kyverno/kyverno -n kyverno --create-namespace --version "$KYVERNO_CHART" \
+            -f deploy/platform/kyverno/values.yaml --wait --timeout 5m
+          # the test uses Enforce right away (production starts in Audit for a week)
+          for f in deploy/platform/policies/*.yaml; do
+            sed 's/failureAction: Audit/failureAction: Enforce/' "$f" | kubectl apply -f -
+          done
+          kubectl wait --for=condition=Ready clusterpolicy --all --timeout=120s
+          kubectl create namespace hrscreen-staging
+          try() { # try <expect allowed|denied> <what> <image> [extra pod spec json]
+            want=$1; what=$2; image=$3; extra=${4:-}
+            spec="{\"containers\":[{\"name\":\"x\",\"image\":\"$image\",\"resources\":{\"requests\":{\"cpu\":\"10m\",\"memory\":\"16Mi\"},\"limits\":{\"memory\":\"32Mi\"}}}]$extra}"
+            if out=$(kubectl run "t$RANDOM" -n hrscreen-staging --image="$image" --restart=Never \
+                       --overrides="{\"apiVersion\":\"v1\",\"spec\":$spec}" --dry-run=server -o name 2>&1); then got=allowed; else got=denied; fi
+            echo "$what: $got"; echo "$out" | tail -2
+            echo "| $what | $want | $got |" >> "$GITHUB_STEP_SUMMARY"
+            [ "$got" = "$want" ] || { echo "::error::$what: expected $want, got $got"; exit 1; }
+          }
+          echo "| Pod in hrscreen-staging | Expected | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          unsigned="ghcr.io/zhaqsylyqq/resume_analyzer@sha256:$(printf '1%.0s' $(seq 64))"
+          try denied "image from Docker Hub" nginx:1.29.3
+          try denied "our image by :latest" ghcr.io/zhaqsylyqq/resume_analyzer:latest
+          try denied "our name, digest without build.yml signature" "$unsigned"
+          try denied "host network" "$unsigned" ',"hostNetwork":true'
+          kubectl get policyreports -A || true
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get all -A || true
+          kubectl -n hrscreen describe pods || true
+          kubectl -n hrscreen logs -l app.kubernetes.io/component=web --tail=50 || true
+          kubectl -n hrscreen logs -l app.kubernetes.io/component=worker --tail=50 || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -40 || true
