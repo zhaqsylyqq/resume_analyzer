@@ -12,6 +12,9 @@ Run it for every release to the live site. Write the result in the work log.
 3. `flask --app app db-check` shows the expected schema and record counts.
 4. A fresh backup exists: `backup` (and `backup-offsite` when the USB drive is in), then
    `restore-check` passes.
+4a. Servers that run the container image (Docker, cluster): run only the digest published by
+    `build.yml` (its run summary shows it) and check it first with
+    `scripts/verify_image.sh ghcr.io/zhaqsylyqq/resume_analyzer@sha256:...` (CD-01).
 
 ## After the switch, through the public address (Cloudflare Tunnel)
 

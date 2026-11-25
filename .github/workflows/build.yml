@@ -1,0 +1,174 @@
+name: Build and publish image
+
+# CD-01. The only way an image gets into the registry: built here from a commit on `main`
+# (or a `v*` tag), scanned, pushed to GHCR by digest, signed with cosign keyless (GitHub OIDC,
+# no keys to keep) and given two GitHub attestations: build provenance (SLSA Build L2) and the
+# CycloneDX SBOM. The last steps verify the signature and the attestations the way a cluster
+# will (CD-03), and prove that an image signed by anyone else is refused.
+#
+# Pull requests that change this file run a dry run: the same build and scan, nothing pushed.
+# Check an image by hand: scripts/verify_image.sh ghcr.io/zhaqsylyqq/resume_analyzer@sha256:...
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths: [".github/workflows/build.yml", "Dockerfile", "requirements.lock"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false  # never stop a publish half-way (pushed but not signed)
+
+env:
+  REGISTRY: ghcr.io
+  TRIVY_VERSION: v0.76.1
+  REPORT_ONLY: "true"  # CI-03: flip to "false" together with ci.yml and security.yml on 2026-12-01
+  # A foreign image the verification must refuse (official postgres, pinned as in compose)
+  FOREIGN_IMAGE: postgres:16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
+
+jobs:
+  image:
+    name: Build, sign, attest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write      # push to GHCR
+      id-token: write      # cosign keyless and attestations: a short-lived certificate for this workflow
+      attestations: write  # GitHub artifact attestations
+    env:
+      PUBLISH: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Image name (GHCR needs lower case)
+        id: name
+        run: echo "image=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build (loaded locally for the scan)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: local/hrscreen:scan
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            REVISION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy scan before publishing (fixed HIGH/CRITICAL)
+        continue-on-error: ${{ env.REPORT_ONLY == 'true' }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          image-ref: local/hrscreen:scan
+          scanners: vuln,secret
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: "1"
+
+      - name: Sign in to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push (same layers, from the cache)
+        id: push
+        if: env.PUBLISH == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            REVISION=${{ github.sha }}
+          cache-from: type=gha
+          # one plain manifest per digest: provenance and SBOM go in as GitHub attestations below
+          provenance: false
+          sbom: false
+
+      - uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
+        if: env.PUBLISH == 'true'
+
+      - name: Sign the digest (cosign keyless)
+        if: env.PUBLISH == 'true'
+        env:
+          REF: ${{ steps.name.outputs.image }}@${{ steps.push.outputs.digest }}
+        run: cosign sign --yes "$REF"
+
+      - name: Attest build provenance (SLSA Build L2)
+        if: env.PUBLISH == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.name.outputs.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: SBOM of the published digest (CycloneDX)
+        if: env.PUBLISH == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          image-ref: ${{ steps.name.outputs.image }}@${{ steps.push.outputs.digest }}
+          scan-type: image
+          format: cyclonedx
+          output: sbom.cdx.json
+          skip-setup-trivy: true
+
+      - name: Attest the SBOM
+        if: env.PUBLISH == 'true'
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ${{ steps.name.outputs.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          sbom-path: sbom.cdx.json
+          push-to-registry: true
+
+      - name: Verify like the cluster will (and refuse a foreign image)
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ steps.name.outputs.image }}@${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          ./scripts/verify_image.sh "$REF"
+          if ./scripts/verify_image.sh "$FOREIGN_IMAGE" >/tmp/foreign.log 2>&1; then
+            echo "::error::a foreign image passed the verification"; cat /tmp/foreign.log; exit 1
+          fi
+          echo "A foreign image is refused, as it should be."
+          {
+            echo "### Published image"
+            echo
+            echo "\`$REF\`"
+            echo
+            echo "Tags: $(echo '${{ steps.meta.outputs.tags }}' | tr '\n' ' ')"
+            echo
+            echo "Signed by \`.github/workflows/build.yml\` on \`${GITHUB_REF}\`; provenance and SBOM attested."
+          } >> "$GITHUB_STEP_SUMMARY"
