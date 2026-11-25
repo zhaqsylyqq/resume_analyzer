@@ -1,0 +1,9 @@
+apiVersion: v2
+name: hrscreen
+description: HR Resume Analyzer (hrscreen.date) - web, analysis workers, migrations, clean-up (INF-05)
+type: application
+# Chart version: bump when templates or defaults change. The app version is the image digest.
+version: 0.1.0
+appVersion: "main"
+home: https://github.com/zhaqsylyqq/resume_analyzer
+sources: ["https://github.com/zhaqsylyqq/resume_analyzer"]

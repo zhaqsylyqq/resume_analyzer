@@ -91,3 +91,14 @@ Members) to manage DNS and the tunnel directly.
   `hrscreen.date` → `http://app:8000`, and use its token.
 - The image tag `cloudflare/cloudflared:2026.10.7` matches the version used on the laptop.
   Confirm that the tag exists on Docker Hub.
+
+## Kubernetes (INF-05, prepared, no cluster yet)
+
+The plan's target is k3s on the team's own machine. The Helm chart is ready in `deploy/chart`
+with values per environment in `deploy/envs/`; see `docs/specs/INF-05-helm-chart.md`. Once a
+cluster exists (INF-02) and the secrets are in place (INF-07):
+
+    helm upgrade --install hrscreen deploy/chart -n hrscreen -f deploy/envs/prod/values.yaml \
+      --set image.digest=sha256:<digest from the build.yml run summary>
+
+`deploy/docker-compose.yml` stays until the switch-over drill (PRD-01).

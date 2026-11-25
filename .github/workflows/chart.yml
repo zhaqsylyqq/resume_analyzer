@@ -1,0 +1,147 @@
+name: Helm chart
+
+# INF-05. Lint and schema-check the chart for every environment, then install it into a
+# throw-away kind cluster in a namespace that enforces Pod Security "restricted": web and
+# worker must start (read-only root, non-root, no capabilities), the migration hook must run,
+# /metrics must stay closed to forwarded requests, and a rolling update under steady traffic
+# must answer every request (no 5xx, no refused connection).
+
+on:
+  pull_request:
+    paths: ["deploy/chart/**", "deploy/envs/**", ".github/workflows/chart.yml", "Dockerfile", "app/gunicorn_conf.py"]
+  push:
+    branches: [main]
+    paths: ["deploy/chart/**", "deploy/envs/**", ".github/workflows/chart.yml", "Dockerfile", "app/gunicorn_conf.py"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chart-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KUBECONFORM_VERSION: v0.7.0
+  KUBECONFORM_SHA256: c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3
+  K8S_VERSION: 1.34.0
+  # same PostgreSQL as compose and CI, by digest
+  POSTGRES_IMAGE: postgres:16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
+
+jobs:
+  chart:
+    name: Lint, schemas, install in kind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v3.19.0
+
+      - name: kubeconform
+        run: |
+          curl -sSfLo /tmp/kc.tgz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  /tmp/kc.tgz" | sha256sum -c -
+          tar -xzf /tmp/kc.tgz -C /usr/local/bin kubeconform
+
+      - name: helm lint and kubeconform (prod, staging, every switch on)
+        run: |
+          set -euo pipefail
+          digest="sha256:$(printf 'a%.0s' $(seq 64))"
+          for env in prod staging; do
+            helm lint deploy/chart -f "deploy/envs/$env/values.yaml" --set image.digest="$digest" --strict
+            helm template hrscreen deploy/chart -n hrscreen -f "deploy/envs/$env/values.yaml" --set image.digest="$digest" \
+              | kubeconform -strict -summary -kubernetes-version "$K8S_VERSION"
+          done
+          helm template hrscreen deploy/chart --set image.digest="$digest" --set web.autoscaling.enabled=true \
+            --set ingress.enabled=true --set ingress.host=staging.example \
+            | kubeconform -strict -summary -kubernetes-version "$K8S_VERSION"
+          if helm template hrscreen deploy/chart >/dev/null 2>&1; then
+            echo "::error::the chart rendered without an image digest"; exit 1
+          fi
+
+      - name: Build the image for the test cluster
+        run: docker build -t local/hrscreen:ci --build-arg VERSION=ci --build-arg REVISION="$GITHUB_SHA" .
+
+      - uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          version: v0.30.0
+          cluster_name: hrscreen
+          wait: 120s
+
+      - name: Cluster for the test (PostgreSQL, restricted namespace, secrets)
+        run: |
+          set -euo pipefail
+          kind load docker-image local/hrscreen:ci --name hrscreen
+          kubectl create namespace db
+          kubectl -n db create deployment pg --image="$POSTGRES_IMAGE" --port=5432
+          kubectl -n db set env deployment/pg POSTGRES_PASSWORD=ci-only POSTGRES_DB=hrscreen
+          kubectl -n db expose deployment pg --port=5432
+          kubectl -n db rollout status deployment/pg --timeout=120s
+          kubectl create namespace hrscreen
+          kubectl label namespace hrscreen pod-security.kubernetes.io/enforce=restricted \
+            pod-security.kubernetes.io/enforce-version=latest
+          common=(--from-literal=FLASK_SECRET_KEY="$(openssl rand -hex 32)"
+                  --from-literal=DATA_KEY="$(openssl rand -base64 32)"
+                  --from-literal=DATABASE_URL=postgresql://postgres:ci-only@pg.db.svc:5432/hrscreen
+                  --from-literal=DEEPSEEK_API_KEY=sk-ci-not-a-real-key)
+          kubectl -n hrscreen create secret generic hrscreen-web "${common[@]}"
+          kubectl -n hrscreen create secret generic hrscreen-worker "${common[@]}"
+          for i in $(seq 30); do
+            kubectl -n db exec deploy/pg -- pg_isready -U postgres && break; sleep 2
+          done
+
+      - name: Install (migration hook, web x2, worker) under Pod Security "restricted"
+        run: |
+          set -euo pipefail
+          helm upgrade --install hrscreen deploy/chart -n hrscreen -f deploy/envs/prod/values.yaml \
+            --set image.repository=local/hrscreen --set image.tag=ci --set image.pullPolicy=Never \
+            --wait --timeout 5m
+          kubectl -n hrscreen get pods -o wide
+          kubectl -n hrscreen rollout status deploy/hrscreen-web --timeout=60s
+          kubectl -n hrscreen rollout status deploy/hrscreen-worker --timeout=60s
+
+      - name: Pages, metrics and their protection from inside the cluster
+        run: |
+          set -euo pipefail
+          run() { kubectl run "probe-$1" -n default --rm -i --restart=Never --quiet --image=curlimages/curl:8.11.1 -- sh -c "$2"; }
+          run health 'curl -fsS http://hrscreen.hrscreen.svc:8000/readyz'
+          run metrics 'curl -fsS http://hrscreen.hrscreen.svc:8000/metrics | grep -q "^hrscreen_database_up 1.0" && echo metrics-ok'
+          code=$(run cf 'curl -s -o /dev/null -w %{http_code} -H "CF-Connecting-IP: 203.0.113.9" http://hrscreen.hrscreen.svc:8000/metrics')
+          test "$code" = "404" || { echo "::error::/metrics answered $code to a request from Cloudflare"; exit 1; }
+          run worker 'curl -fsS http://hrscreen-worker-metrics.hrscreen.svc:9101/metrics | grep -q "^process_" && echo worker-metrics-ok'
+
+      - name: Rolling update under steady traffic answers every request
+        run: |
+          set -euo pipefail
+          kubectl run load -n default --restart=Never --image=curlimages/curl:8.11.1 -- sh -c '
+            ok=0; bad=0; end=$(( $(date +%s) + 100 ))
+            while [ $(date +%s) -lt $end ]; do
+              c=$(curl -s -o /dev/null -m 3 -w "%{http_code}" http://hrscreen.hrscreen.svc:8000/login)
+              if [ "$c" = "200" ]; then ok=$((ok+1)); else bad=$((bad+1)); echo "bad $c"; fi
+              sleep 0.1
+            done
+            echo "RESULT ok=$ok bad=$bad"'
+          kubectl wait -n default --for=condition=Ready pod/load --timeout=60s
+          sleep 10
+          helm upgrade hrscreen deploy/chart -n hrscreen -f deploy/envs/prod/values.yaml \
+            --set image.repository=local/hrscreen --set image.tag=ci --set image.pullPolicy=Never \
+            --set-string podAnnotations.rollout="$GITHUB_RUN_ID" --wait --timeout 5m
+          kubectl wait -n default --for=jsonpath='{.status.phase}'=Succeeded pod/load --timeout=180s
+          kubectl logs -n default load | tail -5
+          result=$(kubectl logs -n default load | grep RESULT)
+          echo "$result" >> "$GITHUB_STEP_SUMMARY"
+          echo "$result" | grep -q "bad=0 *$" || { echo "::error::requests failed during the rolling update"; exit 1; }
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get all -A || true
+          kubectl -n hrscreen describe pods || true
+          kubectl -n hrscreen logs -l app.kubernetes.io/component=web --tail=50 || true
+          kubectl -n hrscreen logs -l app.kubernetes.io/component=worker --tail=50 || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -40 || true

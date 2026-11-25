@@ -115,6 +115,18 @@ def test_several_processes_are_added_up(tmp_path, monkeypatch):
     gunicorn_conf.child_exit(None, type("W", (), {"pid": 12345})())
 
 
+def test_multiprocess_folder_is_created_on_import(tmp_path):
+    """gunicorn imports the app (and creates metrics) before its hooks run: no crash on a fresh /tmp."""
+    import subprocess
+    import sys
+
+    folder = tmp_path / "not" / "yet" / "there"
+    result = subprocess.run([sys.executable, "-c", "import app.metrics"], capture_output=True, text=True,
+                            env={**__import__("os").environ, "PROMETHEUS_MULTIPROC_DIR": str(folder)})
+    assert result.returncode == 0, result.stderr
+    assert folder.is_dir()
+
+
 def test_worker_serves_its_own_metrics(app, monkeypatch):
     from app import worker as worker_module
 

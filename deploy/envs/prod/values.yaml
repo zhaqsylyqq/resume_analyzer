@@ -1,0 +1,8 @@
+# INF-05: production. Namespace hrscreen; always install with --set image.digest=sha256:...
+web:
+  replicas: 2
+  autoscaling:
+    enabled: false   # one node: more pods would not add capacity
+worker:
+  replicas: 1
+  threads: 2

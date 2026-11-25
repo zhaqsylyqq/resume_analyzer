@@ -1,0 +1,92 @@
+# INF-05: defaults for every environment; deploy/envs/<env>/values.yaml overrides them.
+# Install:  helm upgrade --install hrscreen deploy/chart -n hrscreen -f deploy/envs/prod/values.yaml \
+#             --set image.digest=sha256:...   (the digest from the build.yml run summary, CD-01)
+
+image:
+  repository: ghcr.io/zhaqsylyqq/resume_analyzer
+  # Run by digest: signed by build.yml (CD-01), cannot be moved like a tag. Wins over `tag`.
+  digest: ""
+  # Only when no digest is given (local tests): e.g. sha-<commit> or a local build.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []   # e.g. [{name: ghcr}] while the GHCR package is private
+
+# Existing Secrets with the environment variables (INF-07 creates them from SOPS files).
+# web:    FLASK_SECRET_KEY, DATA_KEY, DATABASE_URL, the AI key (vacancy bias check runs in web)
+# worker: FLASK_SECRET_KEY, DATA_KEY, DATABASE_URL, the AI key
+secrets:
+  web: hrscreen-web
+  worker: hrscreen-worker
+
+# Non-secret settings (a ConfigMap; see app/config.py for the full list).
+config:
+  APP_ENV: production
+  WORKER_MODE: external
+  LOG_FORMAT: json
+  LLM_PROVIDER: deepseek
+  SESSION_COOKIE_SECURE: "1"
+  # k3s pod network: Traefik / cloudflared pods may pass the visitor IP
+  TRUSTED_PROXIES: "127.0.0.1,::1,10.42.0.0/16"
+  SHUTDOWN_TIMEOUT: "25"
+  # read-only image: the instance folder and temp files live in the /tmp emptyDir
+  DATA_DIR: /tmp/data
+  HOME: /tmp
+
+web:
+  replicas: 2
+  processes: 2   # gunicorn processes per pod (WEB_PROCESSES)
+  threads: 4     # threads per process (WEB_THREADS)
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+  # PodDisruptionBudget: keep one web pod during node drains (only with 2+ replicas)
+  pdb:
+    enabled: true
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+
+worker:
+  replicas: 1
+  threads: 2      # parallel analyses per pod (keep replicas x threads within the AI rate limit)
+  metricsPort: 9101
+  resources:
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {memory: 768Mi}   # PDF/DOCX parsing happens here (APP-05)
+
+# Database schema before every install/upgrade (the app also migrates at start-up, under a lock)
+migrations:
+  enabled: true
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 256Mi}
+
+# Delete screening sessions older than RETENTION_DAYS (R1); the app also does it now and then
+purge:
+  enabled: true
+  schedule: "17 3 * * *"   # 03:17 UTC = 08:17 Almaty
+  resources:
+    requests: {cpu: 10m, memory: 128Mi}
+    limits: {memory: 256Mi}
+
+service:
+  port: 8000
+
+# Traefik (k3s). Off by default: hrscreen.date reaches the cluster through Cloudflare Tunnel
+# (INF-08 decides the hosts). /metrics is never public: the app refuses forwarded requests.
+ingress:
+  enabled: false
+  className: traefik
+  host: ""
+  annotations: {}
+  tls: []
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Seconds a stopping pod gets: SHUTDOWN_TIMEOUT (25 s) to finish analyses + margin (APP-08)
+terminationGracePeriodSeconds: 35

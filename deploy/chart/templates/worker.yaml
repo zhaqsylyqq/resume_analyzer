@@ -1,0 +1,62 @@
+{{- $name := include "hrscreen.fullname" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}-worker
+  labels:
+    {{- include "hrscreen.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "hrscreen.selector" (dict "root" . "component" "worker") | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "hrscreen.selector" (dict "root" . "component" "worker") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- include "hrscreen.pod" (dict "root" . "tmpSize" "1Gi") | nindent 6 }}
+      # finishes the resumes in hand on SIGTERM (APP-04/08); several workers never take the same one
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: worker
+          image: {{ include "hrscreen.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["flask", "--app", "app", "worker", "--threads", "{{ .Values.worker.threads }}",
+                    "--metrics-port", "{{ .Values.worker.metricsPort }}"]
+          envFrom:
+            - configMapRef:
+                name: {{ $name }}-config
+            - secretRef:
+                name: {{ .Values.secrets.worker }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.worker.metricsPort }}
+          # the metrics port answers as long as the process runs (OBS-01)
+          startupProbe:
+            tcpSocket: {port: metrics}
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            tcpSocket: {port: metrics}
+            periodSeconds: 15
+            failureThreshold: 4
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext:
+            {{- include "hrscreen.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp

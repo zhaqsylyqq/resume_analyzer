@@ -1,0 +1,10 @@
+hrscreen {{ include "hrscreen.version" . }} in namespace {{ .Release.Namespace }}.
+
+Check:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "hrscreen.fullname" . }}-web
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "hrscreen.fullname" . }} 8000:{{ .Values.service.port }}
+  curl http://127.0.0.1:8000/readyz
+{{- if not .Values.image.digest }}
+
+WARNING: running by tag ({{ .Values.image.tag }}), not by a signed digest. Use only for tests.
+{{- end }}

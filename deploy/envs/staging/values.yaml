@@ -1,0 +1,12 @@
+# INF-05: staging. Namespace hrscreen-staging; host decided in INF-08.
+config:
+  LOG_FORMAT: json
+web:
+  replicas: 1
+  pdb:
+    enabled: false
+worker:
+  replicas: 1
+  threads: 1
+purge:
+  schedule: "47 2 * * *"

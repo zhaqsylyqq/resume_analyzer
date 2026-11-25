@@ -30,6 +30,11 @@ from prometheus_client.registry import Collector
 
 CONTENT_TYPE = CONTENT_TYPE_LATEST
 
+# Multi-process mode writes a file per metric as soon as the metric is created (at import, in
+# the gunicorn master too, before any hook runs): the folder must exist by then (INF-05 finding).
+if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+    os.makedirs(os.environ["PROMETHEUS_MULTIPROC_DIR"], exist_ok=True)
+
 HTTP_REQUESTS = Counter(
     "hrscreen_http_requests_total", "HTTP requests answered, by route name and status code.",
     ["method", "endpoint", "status"])
