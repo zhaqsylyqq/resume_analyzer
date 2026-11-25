@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 from flask import Flask, current_app, has_app_context
 
+from .. import metrics, observability
 from . import storage
 from .llm import (
     AnalysisFailed,
@@ -258,8 +259,14 @@ def _remaining(db) -> dict[int, int]:
 
 def _analyze(app: Flask, service: LLMService, resume_id: int, language: str,
              usage: UsageCounter | None = None) -> None:
-    with usage_scope(usage or UsageCounter()):
-        _analyze_one(app, service, resume_id, language)
+    token = observability.set_request_id(f"resume-{resume_id}")  # OBS-01: log lines of this analysis
+    started = time.perf_counter()
+    try:
+        with usage_scope(usage or UsageCounter()):
+            _analyze_one(app, service, resume_id, language)
+    finally:
+        metrics.ANALYSIS_DURATION.observe(time.perf_counter() - started)
+        observability.reset_request_id(token)
 
 
 def _analyze_one(app: Flask, service: LLMService, resume_id: int, language: str) -> None:

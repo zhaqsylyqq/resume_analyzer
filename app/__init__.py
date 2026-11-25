@@ -14,6 +14,7 @@ from .auth import init_auth
 from .cli import init_cli
 from .config import load_data_keyring, load_secret_key, load_settings
 from .i18n import init_i18n, translate
+from .observability import configure_logging, init_observability
 from .retention import init_retention
 from .security import init_security
 from .services import fieldcrypt, storage
@@ -73,11 +74,12 @@ def create_app(overrides: dict[str, Any] | None = None, read_only: bool | None =
     app.extensions["settings"] = settings
     app.config["READ_ONLY_START"] = read_only
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    configure_logging(app.config.get("LOG_FORMAT", "text"))  # OBS-01: request ids, no personal data
     logging.getLogger("httpx").setLevel(logging.WARNING)  # our Gemini service logs retries itself
     logging.getLogger("fontTools").setLevel(logging.WARNING)
     logging.getLogger("alembic").setLevel(logging.WARNING)  # APP-02: migrations log only problems  # PDF export font subsetting is noisy
 
+    init_observability(app)  # first: every later hook already has the request id
     init_security(app)
     init_i18n(app)
     if not read_only:

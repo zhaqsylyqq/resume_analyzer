@@ -53,6 +53,7 @@ from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel, ValidationError
 
+from .. import metrics
 from . import injection, pii
 from .anonymize import scoring_view
 from .schemas import CandidateProfile, FitAssessment, ResumeFacts, ScoringResult, VacancyInput, Verdict
@@ -107,6 +108,7 @@ def _int(value: Any) -> int:
 
 def record_usage(prompt: Any = 0, cache_hit: Any = 0, completion: Any = 0) -> None:
     """Called by backends after a successful reply; ignored outside a usage_scope."""
+    metrics.record_tokens(_int(prompt), _int(cache_hit), _int(completion))  # OBS-01: every request
     counter = _usage.get()
     if counter is not None:
         counter.add(_int(prompt), _int(cache_hit), _int(completion))
@@ -351,7 +353,16 @@ class LLMService:
                 self._sleep(wait)
             try:
                 with self._slots:
-                    return self.backend.complete(model, system, user, schema)
+                    started = time.perf_counter()
+                    try:
+                        reply = self.backend.complete(model, system, user, schema)
+                    except ProviderError as exc:
+                        metrics.LLM_REQUESTS.labels(model, metrics.outcome_of(exc.code)).inc()
+                        raise
+                    finally:
+                        metrics.LLM_DURATION.labels(model).observe(time.perf_counter() - started)
+                    metrics.LLM_REQUESTS.labels(model, "ok").inc()
+                    return reply
             except ProviderError as exc:
                 if exc.code == 402:
                     with self._breaker_lock:

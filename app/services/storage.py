@@ -445,6 +445,10 @@ def raw_file(row: Any) -> bytes | None:
 def save_parsed(db: Database, resume_id: int, text: str | None, error: str | None) -> None:
     """APP-05: store the extracted text (or the parse error) and drop the uploaded file: the
     original document (it may hold a photo and contacts) is not kept once the text exists."""
+    if error:
+        from .. import metrics
+
+        metrics.RESUMES_FINISHED.labels(PARSE_FAILED, error).inc()
     with db:
         if error:
             db.execute(
@@ -566,6 +570,10 @@ def requeue_unscored(db: Database, session_id: int) -> int:
 
 
 def set_resume_status(db: Database, resume_id: int, status: str, error: str | None = None) -> None:
+    if status in (DONE, ANALYSIS_FAILED):  # OBS-01: a resume left the queue
+        from .. import metrics
+
+        metrics.RESUMES_FINISHED.labels(status, error or "").inc()
     with db:
         db.execute(
             "UPDATE resumes SET status = ?, error = ?, analyzed_at = CASE WHEN ? THEN ? ELSE analyzed_at END WHERE id = ?",

@@ -21,3 +21,21 @@ forwarded_allow_ips = os.environ.get("TRUSTED_PROXIES", "127.0.0.1")
 # gunicorn >= 25 opens a control socket in $HOME; the container's home is read-only and the
 # app does not use it (no `gunicornc`), so it stays off.
 control_socket_disable = True
+
+
+# OBS-01: with PROMETHEUS_MULTIPROC_DIR every web process writes its metrics to that folder and
+# /metrics adds them up; it must start empty and forget processes that exited.
+def on_starting(server):  # noqa: ARG001 - gunicorn hook signature
+    folder = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+        for name in os.listdir(folder):
+            if name.endswith(".db"):
+                os.remove(os.path.join(folder, name))
+
+
+def child_exit(server, worker):  # noqa: ARG001 - gunicorn hook signature
+    if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        from prometheus_client import multiprocess
+
+        multiprocess.mark_process_dead(worker.pid)

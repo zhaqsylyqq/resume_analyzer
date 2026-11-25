@@ -7,6 +7,9 @@ Every endpoint has exactly one rule:
     OWNER      a signed-in user who may see the screening session in the URL (`session_id`):
                its owner, or an admin
     ADMIN      admins only
+    INTERNAL   the monitoring system only (/metrics, OBS-01): a request from this machine or
+               the private network that did not come through Cloudflare, or one carrying
+               METRICS_TOKEN; everyone else gets 404, signed in or not
 
 A route missing from RULES is closed: 404 for everyone, and an error in the log. So a new
 route cannot be published by mistake without deciding who may open it, and
@@ -31,13 +34,15 @@ PUBLIC = "public"
 SIGNED_IN = "signed_in"
 OWNER = "owner"
 ADMIN = "admin"
-LEVELS = (PUBLIC, SIGNED_IN, OWNER, ADMIN)
+INTERNAL = "internal"
+LEVELS = (PUBLIC, SIGNED_IN, OWNER, ADMIN, INTERNAL)
 
 RULES: dict[str, str] = {
     "static": PUBLIC,
     # core
     "core.health": PUBLIC,
     "core.ready": PUBLIC,
+    "metrics": INTERNAL,  # OBS-01
     "core.set_language": PUBLIC,
     "core.index": SIGNED_IN,
     # sign-in, sign-up, reset links
@@ -167,6 +172,12 @@ def enforce():
         log.error("route %s has no access rule in app/policy.py: closed", endpoint)
         abort(404)
     if rule == PUBLIC:
+        return None
+    if rule == INTERNAL:
+        from .observability import metrics_allowed
+
+        if not metrics_allowed():
+            abort(404)
         return None
     if g.get("user") is None:
         return login_required_response()

@@ -129,6 +129,11 @@ def test_every_route_for_every_visitor(app, visitors, fake_gemini):
             if expected == policy.PUBLIC:
                 assert not _asks_to_sign_in(response), where
                 continue
+            if expected == policy.INTERNAL:  # OBS-01: the test client is local and not behind Cloudflare
+                assert response.status_code == 200, where
+                outside = browser.open(url, method=method, headers={"CF-Connecting-IP": "203.0.113.9"})
+                assert outside.status_code == 404, where
+                continue
             if visitor == "anonymous":
                 assert _asks_to_sign_in(response), where
                 continue

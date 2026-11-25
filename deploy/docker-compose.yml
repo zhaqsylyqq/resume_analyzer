@@ -20,6 +20,12 @@ services:
       TRUSTED_PROXIES: "127.0.0.1,::1,172.16.0.0/12"
       # APP-02: PostgreSQL in the `db` service; the password comes from POSTGRES_PASSWORD in .env
       DATABASE_URL: postgresql://hrscreen:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/hrscreen
+      # OBS-01: JSON log lines; metrics of all gunicorn processes added up (/metrics answers
+      # only inside the compose network, never through the tunnel)
+      LOG_FORMAT: json
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+    tmpfs:
+      - /tmp/prometheus
     volumes:
       - app-data:/app/instance
     depends_on:
@@ -33,10 +39,12 @@ services:
     build: ..
     env_file: ../.env
     # Scale with `docker compose up -d --scale worker=2`: workers never take the same resume.
-    command: ["flask", "--app", "app", "worker"]
+    # OBS-01: the worker's own metrics on port 9101 inside the compose network (not published)
+    command: ["flask", "--app", "app", "worker", "--metrics-port", "9101"]
     environment:
       APP_ENV: production
       WORKER_MODE: external
+      LOG_FORMAT: json
       DATABASE_URL: postgresql://hrscreen:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/hrscreen
     volumes:
       - app-data:/app/instance

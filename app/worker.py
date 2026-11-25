@@ -152,10 +152,17 @@ class Worker:
 @click.command("worker")
 @click.option("--threads", type=click.IntRange(min=1, max=16), default=None,
               help="Parallel analyses in this process (default: LLM_CONCURRENCY).")
+@click.option("--metrics-port", type=click.IntRange(min=1, max=65535), default=None,
+              help="OBS-01: serve this worker's Prometheus metrics on this port (private network only).")
 @with_appcontext
-def worker_command(threads: int | None) -> None:
+def worker_command(threads: int | None, metrics_port: int | None) -> None:
     """Analyze pending resumes until stopped (use with WORKER_MODE=external)."""
     app = current_app._get_current_object()  # type: ignore[attr-defined]
+    if metrics_port:
+        from prometheus_client import start_http_server
+
+        start_http_server(metrics_port)  # never publish this port: compose/Kubernetes network only
+        log.info("Worker metrics on port %s", metrics_port)
     try:
         service = get_llm()
     except GeminiError as exc:

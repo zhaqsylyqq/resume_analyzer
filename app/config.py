@@ -27,7 +27,7 @@ from typing import Any
 ENVIRONMENTS = ("development", "production", "test")
 PROVIDERS = ("gemini", "deepseek")
 SECRET_NAMES = ("FLASK_SECRET_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "INVITE_CODE", "BACKUP_KEY", "DATABASE_URL",
-                "BACKUP_RESTORE_URL", "DATA_KEY", "DATA_KEY_OLD")
+                "BACKUP_RESTORE_URL", "DATA_KEY", "DATA_KEY_OLD", "METRICS_TOKEN", "SENTRY_DSN")
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off", ""}
 
@@ -97,6 +97,13 @@ class Settings:
     # previous keys (comma-separated). Empty: <data>/.data_key (generated outside production).
     data_key: str = ""
     data_key_old: str = ""
+    # OBS-01: log lines as text (laptop) or one JSON object per line (containers, Loki)
+    log_format: str = "text"
+    # OBS-01: /metrics also answers to "Authorization: Bearer <token>" (otherwise only to
+    # requests from this machine / the private network that did not come through Cloudflare)
+    metrics_token: str = ""
+    # OBS-01: send unexpected errors to Sentry (empty = off); no personal data is sent
+    sentry_dsn: str = ""
     # Sources of secrets read from *_FILE, for the config report (never the values)
     secret_sources: dict[str, str] = field(default_factory=dict)
 
@@ -137,6 +144,9 @@ class Settings:
             "BACKUP_RESTORE_URL": self.backup_restore_url,
             "DATA_KEY": self.data_key,
             "DATA_KEY_OLD": self.data_key_old,
+            "LOG_FORMAT": self.log_format,
+            "METRICS_TOKEN": self.metrics_token,
+            "SENTRY_DSN": self.sentry_dsn,
             # Uploads
             "MAX_FILES_PER_BATCH": 50,
             "MAX_FILE_BYTES": 5 * 1024 * 1024,
@@ -295,6 +305,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         backup_key=r.secret("BACKUP_KEY"),
         data_key=r.secret("DATA_KEY"),
         data_key_old=r.secret("DATA_KEY_OLD"),
+        log_format=r.choice("LOG_FORMAT", "text", ("text", "json")),
+        metrics_token=r.secret("METRICS_TOKEN"),
+        sentry_dsn=r.secret("SENTRY_DSN"),
         secret_sources=r.secret_sources,
     )
 
@@ -323,6 +336,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
                     r.problems.append(str(exc))
         if settings.data_key_old and not settings.data_key:
             r.problems.append("DATA_KEY_OLD is set without DATA_KEY: put the new key in DATA_KEY")
+    if settings.metrics_token and len(settings.metrics_token) < 24:
+        r.problems.append("METRICS_TOKEN is too short (use at least 24 random characters)")
+    if settings.sentry_dsn and not settings.sentry_dsn.startswith("https://"):
+        r.problems.append("SENTRY_DSN must start with https://")
     if settings.flask_secret_key and len(settings.flask_secret_key) < 32:
         r.problems.append("FLASK_SECRET_KEY is too short (use at least 32 characters, e.g. 64 hex digits)")
     if production:
