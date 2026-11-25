@@ -24,6 +24,7 @@
 | 18 | S3 example session for new users + delete a vacancy | done |
 | 20 | S5 user feedback: “Подходят” tile filter, mobile layout, score colours | done |
 | 19 | S4 (SIS 10-11): real client IP behind the tunnel, unique email, audit de-dup; CR-01 candidate pipeline | done |
+| 45 | INF-06: NetworkPolicies in the chart — default-deny, then DNS, database, ingress → web, monitoring, public :443 for the AI call; reach/deny matrix checked in kind ([spec](docs/specs/INF-06-network-policies.md)) | done (no cluster yet) |
 | 44 | INF-07: SOPS + age for cluster secrets — `.sops.yaml`, template with one Secret per workload, `scripts/secrets.sh` (keygen/encrypt/edit/apply/check), CI check that committed secrets are encrypted, the whole path exercised in kind, rotation runbook ([spec](docs/specs/INF-07-sops-secrets.md)) | done (key holders still to generate keys) |
 | 43 | INF-05: Helm chart `deploy/chart` (web, worker, migration hook, clean-up CronJob, Services, optional Ingress/HPA, PDB) with Pod Security "restricted" settings; staging/prod values; `chart.yml` lints, schema-checks and installs it in kind with a rolling update under traffic ([spec](docs/specs/INF-05-helm-chart.md)) | done (no cluster yet) |
 | 42 | INF-04: Redis not needed — rate limits, queue, sessions and AI limits already shared through the database or the signed cookie ([note](docs/specs/INF-04-no-redis.md)) | closed |

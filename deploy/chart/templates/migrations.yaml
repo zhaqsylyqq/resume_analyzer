@@ -21,7 +21,7 @@ spec:
       labels:
         {{- include "hrscreen.selector" (dict "root" . "component" "migrate") | nindent 8 }}
     spec:
-      {{- include "hrscreen.pod" (dict "root" .) | nindent 6 }}
+      {{- include "hrscreen.pod" (dict "root" . "serviceAccount" "default") | nindent 6 }}
       restartPolicy: Never
       containers:
         - name: migrate

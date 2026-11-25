@@ -98,6 +98,7 @@ jobs:
           kubectl -n db set env deployment/pg POSTGRES_PASSWORD=ci-only POSTGRES_DB=hrscreen
           kubectl -n db expose deployment pg --port=5432
           kubectl -n db rollout status deployment/pg --timeout=120s
+          kubectl create namespace monitoring   # stands in for Prometheus: allowed to read web and worker
           kubectl create namespace hrscreen
           kubectl label namespace hrscreen pod-security.kubernetes.io/enforce=restricted \
             pod-security.kubernetes.io/enforce-version=latest
@@ -121,6 +122,17 @@ jobs:
           python3 scripts/check_secrets.py "$work/secrets.enc.yaml"
           SOPS_AGE_KEY_FILE="$work/key.txt" sops --decrypt "$work/secrets.enc.yaml" | kubectl apply -n hrscreen -f -
           kubectl -n hrscreen get secrets
+          # INF-06: the test database lives in namespace db; web gets no outbound HTTPS here,
+          # so the policy can be checked to the letter of the DoD ("web cannot reach the internet")
+          cat > /tmp/ci-values.yaml <<'YAML'
+          image: {repository: local/hrscreen, tag: ci, pullPolicy: Never}
+          networkPolicy:
+            webCallsAI: false
+            database:
+              to:
+                - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: db}}
+                  podSelector: {matchLabels: {app: pg}}
+          YAML
           for i in $(seq 30); do
             kubectl -n db exec deploy/pg -- pg_isready -U postgres && break; sleep 2
           done
@@ -129,8 +141,8 @@ jobs:
         run: |
           set -euo pipefail
           helm upgrade --install hrscreen deploy/chart -n hrscreen -f deploy/envs/prod/values.yaml \
-            --set image.repository=local/hrscreen --set image.tag=ci --set image.pullPolicy=Never \
-            --wait --timeout 5m
+            -f /tmp/ci-values.yaml --wait --timeout 5m
+          kubectl -n hrscreen get networkpolicy
           kubectl -n hrscreen get pods -o wide
           kubectl -n hrscreen rollout status deploy/hrscreen-web --timeout=60s
           kubectl -n hrscreen rollout status deploy/hrscreen-worker --timeout=60s
@@ -141,17 +153,44 @@ jobs:
       - name: Pages, metrics and their protection from inside the cluster
         run: |
           set -euo pipefail
-          run() { kubectl run "probe-$1" -n default --rm -i --restart=Never --quiet --image=curlimages/curl:8.11.1 -- sh -c "$2"; }
+          run() { kubectl run "probe-$1" -n monitoring --rm -i --restart=Never --quiet --image=curlimages/curl:8.11.1 -- sh -c "$2"; }
           run health 'curl -fsS http://hrscreen.hrscreen.svc:8000/readyz'
           run metrics 'curl -fsS http://hrscreen.hrscreen.svc:8000/metrics | grep -q "^hrscreen_database_up 1.0" && echo metrics-ok'
           code=$(run cf 'curl -s -o /dev/null -w %{http_code} -H "CF-Connecting-IP: 203.0.113.9" http://hrscreen.hrscreen.svc:8000/metrics')
           test "$code" = "404" || { echo "::error::/metrics answered $code to a request from Cloudflare"; exit 1; }
           run worker 'curl -fsS http://hrscreen-worker-metrics.hrscreen.svc:9101/metrics | grep -q "^process_" && echo worker-metrics-ok'
 
+      - name: Network policy matrix (INF-06)
+        run: |
+          set -euo pipefail
+          # can <pod> open TCP <host> <port>?  (python is in the image; 4 s timeout)
+          reach() { kubectl -n hrscreen exec "deploy/hrscreen-$1" -- python -c \
+            "import socket,sys; socket.create_connection((sys.argv[1], int(sys.argv[2])), 4)" "$2" "$3" >/dev/null 2>&1; }
+          expect() { # expect allowed|denied <what> <command...>
+            want=$1; what=$2; shift 2
+            if "$@"; then got=allowed; else got=denied; fi
+            echo "$what: $got"; echo "| $what | $want | $got |" >> "$GITHUB_STEP_SUMMARY"
+            [ "$got" = "$want" ] || { echo "::error::$what: expected $want, got $got"; exit 1; }
+          }
+          echo "| Path | Expected | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          api=$(kubectl get svc kubernetes -o jsonpath='{.spec.clusterIP}')
+          web=$(kubectl -n hrscreen get svc hrscreen -o jsonpath='{.spec.clusterIP}')
+          expect allowed "worker -> internet :443 (AI API)"  reach worker 1.1.1.1 443
+          expect denied  "worker -> internet :80"            reach worker 1.1.1.1 80
+          expect denied  "worker -> Kubernetes API"          reach worker "$api" 443
+          expect denied  "worker -> web :8000"               reach worker "$web" 8000
+          expect allowed "worker -> database"                reach worker pg.db.svc 5432
+          expect denied  "web -> internet :443"              reach web 1.1.1.1 443
+          expect allowed "web -> database"                   reach web pg.db.svc 5432
+          outsider() { kubectl run "outsider-$RANDOM" -n default --rm -i --restart=Never --quiet \
+            --image=curlimages/curl:8.11.1 -- curl -s -m 4 -o /dev/null "http://hrscreen.hrscreen.svc:8000/healthz"; }
+          expect denied  "pod in another namespace -> web"   outsider
+
       - name: Rolling update under steady traffic answers every request
         run: |
           set -euo pipefail
-          kubectl run load -n default --restart=Never --image=curlimages/curl:8.11.1 -- sh -c '
+          kubectl run load -n monitoring --restart=Never --image=curlimages/curl:8.11.1 -- sh -c '
             ok=0; bad=0; end=$(( $(date +%s) + 100 ))
             while [ $(date +%s) -lt $end ]; do
               c=$(curl -s -o /dev/null -m 3 -w "%{http_code}" http://hrscreen.hrscreen.svc:8000/login)
@@ -159,14 +198,13 @@ jobs:
               sleep 0.1
             done
             echo "RESULT ok=$ok bad=$bad"'
-          kubectl wait -n default --for=condition=Ready pod/load --timeout=60s
+          kubectl wait -n monitoring --for=condition=Ready pod/load --timeout=60s
           sleep 10
-          helm upgrade hrscreen deploy/chart -n hrscreen -f deploy/envs/prod/values.yaml \
-            --set image.repository=local/hrscreen --set image.tag=ci --set image.pullPolicy=Never \
+          helm upgrade hrscreen deploy/chart -n hrscreen -f deploy/envs/prod/values.yaml -f /tmp/ci-values.yaml \
             --set-string podAnnotations.rollout="$GITHUB_RUN_ID" --wait --timeout 5m
-          kubectl wait -n default --for=jsonpath='{.status.phase}'=Succeeded pod/load --timeout=180s
-          kubectl logs -n default load | tail -5
-          result=$(kubectl logs -n default load | grep RESULT)
+          kubectl wait -n monitoring --for=jsonpath='{.status.phase}'=Succeeded pod/load --timeout=180s
+          kubectl logs -n monitoring load | tail -5
+          result=$(kubectl logs -n monitoring load | grep RESULT)
           echo "$result" >> "$GITHUB_STEP_SUMMARY"
           echo "$result" | grep -q "bad=0 *$" || { echo "::error::requests failed during the rolling update"; exit 1; }
 

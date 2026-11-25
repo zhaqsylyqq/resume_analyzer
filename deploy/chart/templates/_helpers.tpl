@@ -65,7 +65,8 @@ seccompProfile:
 {{- end -}}
 
 {{- define "hrscreen.pod" -}}
-serviceAccountName: {{ include "hrscreen.fullname" .root }}
+{{- /* the migration hook runs before the chart's ServiceAccount exists: it uses "default" */}}
+serviceAccountName: {{ .serviceAccount | default (include "hrscreen.fullname" .root) }}
 automountServiceAccountToken: false
 enableServiceLinks: false
 securityContext:

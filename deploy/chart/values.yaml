@@ -90,3 +90,30 @@ affinity: {}
 
 # Seconds a stopping pod gets: SHUTDOWN_TIMEOUT (25 s) to finish analyses + margin (APP-08)
 terminationGracePeriodSeconds: 35
+
+# INF-06: default-deny in the namespace, then only the paths the app needs (plan, section 7).
+# Standard NetworkPolicy cannot filter by domain name: the AI provider is reached as "any
+# public address on 443" (private ranges and the cloud metadata address excluded).
+networkPolicy:
+  enabled: true
+  dns:   # CoreDNS of k3s and kind
+    namespace: kube-system
+    podLabels: {k8s-app: kube-dns}
+  # Who may open the web pods (port 8000): the ingress controller (Traefik of k3s) and, if it
+  # runs inside the cluster, the Cloudflare connector. List of NetworkPolicyPeer.
+  webFrom:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+      podSelector: {matchLabels: {app.kubernetes.io/name: traefik}}
+    - podSelector: {matchLabels: {app.kubernetes.io/name: cloudflared}}
+  # Prometheus (OBS-02) may read /metrics of web and the worker's metrics port
+  monitoringNamespace: monitoring
+  # The database (INF-03 decides where it runs). List of NetworkPolicyPeer, and its port.
+  database:
+    port: 5432
+    to:
+      - podSelector: {matchLabels: {cnpg.io/cluster: pg}}   # CloudNativePG cluster "pg" in the same namespace
+  # Outbound HTTPS to the AI provider: workers always. Web too while the vacancy bias check
+  # still calls the AI from web (INF-07 gap); set false once it runs in the worker.
+  aiPort: 443
+  webCallsAI: true
+  privateRanges: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10"]
