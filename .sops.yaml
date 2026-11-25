@@ -1,0 +1,16 @@
+# INF-07: which age keys encrypt which secrets file. Only `data`/`stringData` values are
+# encrypted; names and keys stay readable in reviews. Public keys only here (age1...):
+# the private keys stay with the two key holders (see docs/runbooks/secrets-rotation.md).
+#
+# Add a key holder:   scripts/secrets.sh keygen   (prints the public key)  -> add it below,
+#                     then `sops updatekeys deploy/envs/<env>/secrets.enc.yaml`.
+creation_rules:
+  - path_regex: deploy/envs/prod/secrets\.enc\.yaml$
+    encrypted_regex: ^(data|stringData)$
+    # TODO(key holders): public keys of Abzal and of the teammate, comma-separated
+    age: >-
+      AGE_PROD_RECIPIENTS
+  - path_regex: deploy/envs/staging/secrets\.enc\.yaml$
+    encrypted_regex: ^(data|stringData)$
+    age: >-
+      AGE_STAGING_RECIPIENTS
