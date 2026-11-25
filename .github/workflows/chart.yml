@@ -31,6 +31,8 @@ env:
   K8S_VERSION: 1.34.0
   # same PostgreSQL as compose and CI, by digest
   POSTGRES_IMAGE: postgres:16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
+  # the Dockerfile's base image, as a plain web server for the network test
+  PYTHON_IMAGE: python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 
 jobs:
   chart:
@@ -99,6 +101,9 @@ jobs:
           kubectl -n db expose deployment pg --port=5432
           kubectl -n db rollout status deployment/pg --timeout=120s
           kubectl create namespace monitoring   # stands in for Prometheus: allowed to read web and worker
+          # INF-06: a decoy HTTP server on 443 at a private (pod) address, in a namespace of its own
+          kubectl create namespace other
+          kubectl -n other run decoy --image="$PYTHON_IMAGE" --port=443 -- python -m http.server 443
           kubectl create namespace hrscreen
           kubectl label namespace hrscreen pod-security.kubernetes.io/enforce=restricted \
             pod-security.kubernetes.io/enforce-version=latest
@@ -174,11 +179,15 @@ jobs:
           }
           echo "| Path | Expected | Result |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          api=$(kubectl get svc kubernetes -o jsonpath='{.spec.clusterIP}')
+          kubectl -n other wait --for=condition=Ready pod/decoy --timeout=120s
+          decoy=$(kubectl -n other get pod decoy -o jsonpath='{.status.podIP}')
+          monitor() { kubectl run "mon-$RANDOM" -n monitoring --rm -i --restart=Never --quiet \
+            --image=curlimages/curl:8.11.1 -- curl -s -m 4 -o /dev/null "$1"; }
           web=$(kubectl -n hrscreen get svc hrscreen -o jsonpath='{.spec.clusterIP}')
           expect allowed "worker -> internet :443 (AI API)"  reach worker 1.1.1.1 443
           expect denied  "worker -> internet :80"            reach worker 1.1.1.1 80
-          expect denied  "worker -> Kubernetes API"          reach worker "$api" 443
+          expect allowed "control: monitoring -> decoy :443" monitor "http://$decoy:443/"
+          expect denied  "worker -> private address :443"    reach worker "$decoy" 443
           expect denied  "worker -> web :8000"               reach worker "$web" 8000
           expect allowed "worker -> database"                reach worker pg.db.svc 5432
           expect denied  "web -> internet :443"              reach web 1.1.1.1 443

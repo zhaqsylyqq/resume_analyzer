@@ -36,7 +36,8 @@ other than 443/53/5432; jobs reach only DNS and the database.
   |---|---|
   | worker → internet :443 | allowed |
   | worker → internet :80 | denied |
-  | worker → Kubernetes API | denied |
+  | control: monitoring → a decoy server on :443 at a pod address | allowed |
+  | worker → that private address :443 | denied |
   | worker → web :8000 | denied |
   | worker → database | allowed |
   | web → internet :443 | denied |
@@ -53,3 +54,14 @@ hook, so it runs before the chart's ServiceAccount exists, and Kubernetes refuse
 ("serviceaccount hrscreen not found"). The hook now uses the namespace's `default` account
 (still with no token mounted). Everything before the install step was green, including the
 SOPS path and the dry run of `build.yml`.
+
+## The Kubernetes API (second kind run)
+
+The second run proved the policies are enforced (worker → internet :80 denied, :443 allowed),
+but "worker → Kubernetes API (10.96.0.1:443)" was allowed: kind's network-policy
+implementation does not filter traffic that ends on the node itself (the API server runs
+there), and Services are translated before the check. This depends on the CNI (k3s uses
+kube-router, which filters by the translated node address). The test now checks the rule
+that matters for data theft — no HTTPS to private addresses — against a decoy server in
+another namespace, with a positive control. The API stays out of reach in another way: no pod
+of the app has a service-account token (INF-05), so the API refuses it anyway (401/403).
